@@ -29,6 +29,7 @@ import zipfile
 from datetime import date, datetime
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from socketserver import TCPServer
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -2202,6 +2203,12 @@ class CortexHTTPServer(ThreadingHTTPServer):
         self.services = services
         self._services_stopped = False
         super().__init__(address, handler)
+
+    def server_bind(self):
+        # Cortex binds a numeric loopback address. HTTPServer's default reverse
+        # DNS lookup can stall startup on a Mac with a slow/unavailable resolver.
+        TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 
     def _stop_services(self):
         if not self._services_stopped:

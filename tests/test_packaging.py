@@ -26,6 +26,17 @@ class MacPackagingTests(unittest.TestCase):
     def test_source_backend_smoke_uses_only_a_disposable_notebook(self):
         self.assertTrue(json.loads(smoke_test.backend_smoke())['ok'])
 
+    def test_loopback_startup_does_not_require_a_dns_resolver(self):
+        import server,tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            with patch('socket.getfqdn',side_effect=AssertionError('Local app startup must not query DNS')):
+                http=server.make_server(str(root/'notes'),0,background_services=False,backup_destination=root/'backups',document_cache=root/'search')
+            try:
+                self.assertEqual(http.server_name,'127.0.0.1')
+                self.assertGreater(http.server_port,0)
+            finally:http.server_close()
+
     def test_darwin_pdf_worker_extracts_text_without_linux_memory_limits(self):
         import contextlib,io,tempfile
         with tempfile.TemporaryDirectory() as directory:
