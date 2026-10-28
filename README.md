@@ -1,10 +1,51 @@
-# Cortex for Apple Silicon
+# Cortex
+
+A simple local notes app: write, add maths or a graph, and keep the work organised.
+
+- New note opens a focused editor and saves automatically.
+- A visible notebook shelf keeps every subject accessible, with note counts and global search. Notebooks open as numbered contents pages with sections and notes. Create an empty notebook or start writing immediately; original overview text remains available. Subject outlines, breadcrumbs and compact page controls keep navigation simple.
+- Alt+= opens a visual equation editor.
+- Insert offers clearly bordered tables, graphs/charts, inline sketches, pictures and attachments, with dark and light appearances.
+- One folder/file import creates readable notes and keeps exact original files.
+- Search notes and selectable PDF text, with matching-page navigation in a one-page PDF reader.
+- Pinning, export, history, recently deleted notes, recovery drafts and automatic verified notebook ZIP backups.
+
+No AI, study dashboard, reminder service, command palette or template chooser is part of the active app. Notes and subnotes are ordinary Markdown files. Ink and grouping live in `.cortex`; keep that directory with the notes. Configured folder sync remains available in Settings.
+
+Read [Using Cortex](docs/lean-notes.md).
+
+## Develop and verify
+
+Use an existing Python environment with PyYAML and pypdf (the pinned release uses pypdf 6.10.0). Native mode also needs pywebview; configured encrypted sync uses cryptography and keyring. The runtime does not need NumPy, Ollama or Graphifyy.
+
+```powershell
+server\.venv\Scripts\python -m unittest discover -s server\tests
+cd web
+npm ci
+npm run test:unit
+npm run lint
+npm run build
+```
+
+Run `server/server.py --vault <folder> --port 8787` or `server/desktop.py --vault <folder>`. Some development-only historical tests still exercise old source libraries; those libraries are not packaged.
+
+## Release
+
+Build and verify first. `packaging/stage_release.py --runtime <existing signed Python folder> --destination <new output folder>` makes a matched release from an explicit dependency set without downloads. `packaging/deploy_release.py --source <verified release> --destination <user Programs/Cortex>` verifies it, preserves signed executable bytes, backs up the prior release and rolls back a failed replacement. Close Cortex before installing. Deployment never edits notebooks or forcibly terminates an app.
+
+## Repository layout and personal data
+
+`server/` holds the full backend development source and tests. `web/` holds the frontend source and tests. `packaging/` contains Windows release tools and the shared list of 35 packaged runtime modules; historical compatibility libraries remain in development source but are not activated or bundled. The root Mac build tools use that same runtime list. `app/web/dist/` retains only the prebuilt application interface for Mac builds without Node.
+
+Keep your notebook folder outside this repository. Personal notes, source documents, `.cortex` metadata, settings, recovery drafts, backups and local runtimes are not included. `.gitignore` excludes common personal-data paths and document formats.
+
+## Apple Silicon Mac builds
 
 This repository builds the complete Cortex notes app for Apple M-series Macs.
 The app embeds Python and uses macOS Cocoa/WebKit. Your friend does not need
 Python, Node, Ollama, an AI model, or an account to use the finished app.
 
-The starting payload is the verified Cortex 1.2.2 release. It includes the editor,
+The current source and prebuilt interface are Cortex 1.2.3. It includes the editor,
 notebooks and contents, equations, graphs, tables, sketches, imports, PDF search,
 verified local backups and existing optional folder sync. It includes no personal
 notes, course materials, recovery drafts, settings, credentials or Windows runtime.
@@ -73,5 +114,4 @@ cloud storage to protect against device loss.
 - Third-party frontend notices are retained in `THIRD-PARTY-NOTICES`; Python
   package versions are recorded in the output build receipt directory.
 
-The current preparation was performed on Windows. The first successful macOS CI
-run is required before claiming that a finished DMG has been produced or tested.
+Each release must pass the native macOS CI checks before its DMG is shared.

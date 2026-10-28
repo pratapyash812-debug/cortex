@@ -8,8 +8,8 @@ web=ROOT/'web/dist' if (ROOT/'web/dist/index.html').exists() else ROOT/'app/web/
 datas=[(str(web),'web/dist'),(str(ROOT/'THIRD-PARTY-NOTICES'),'THIRD-PARTY-NOTICES')]
 datas+=collect_data_files('webview')
 for package in ('pypdf','keyring','cryptography','pywebview'):datas+=copy_metadata(package,recursive=True)
-modules=[p.stem for p in (ROOT/'app/server').glob('*.py')]
-a=Analysis([str(ROOT/'entry.py')],pathex=[str(ROOT),str(ROOT/'app/server')],binaries=[],datas=datas,
+modules=json.loads((ROOT/'packaging/runtime-modules.json').read_text())
+a=Analysis([str(ROOT/'entry.py')],pathex=[str(ROOT),str(ROOT/'server')],binaries=[],datas=datas,
     hiddenimports=modules+['smoke_test','webview.platforms.cocoa','keyring.backends.macOS'],
     excludes=['PyQt5','PyQt6','PySide2','PySide6','gi','clr','pythonnet','tkinter','numpy','matplotlib'],noarchive=False)
 pyz=PYZ(a.pure)

@@ -2,7 +2,7 @@ from pathlib import Path
 import importlib.util,json,subprocess,sys,unittest
 from unittest.mock import patch
 ROOT=Path(__file__).resolve().parents[1]
-sys.path.insert(0,str(ROOT));sys.path.insert(0,str(ROOT/'app/server'))
+sys.path.insert(0,str(ROOT));sys.path.insert(0,str(ROOT/'server'))
 import build_macos,smoke_test,pdf_index
 
 class MacPackagingTests(unittest.TestCase):

@@ -9,3 +9,25 @@ web/node_modules/
 web/dist/
 .DS_Store
 .cache/
+# Personal notebooks and machine-local data must never enter this source repo.
+.cortex/
+Sources/
+attachments/
+notebooks/
+vault/
+backups/
+recovery/
+server/.venv/
+.env
+.env.*
+*.docx
+*.xlsx
+*.xls
+*.pptx
+*.pdf
+*.zip
+*.log
+*.lnk
+*.exe
+*.dll
+*.pyd

@@ -23,8 +23,9 @@ jobs:
       - name: Check platform and source payload
         run: |
           python -c "import platform; assert platform.machine() == 'arm64'"
-          python -m pip install PyYAML==6.0.3 pypdf==6.10.0
+          python -m pip install PyYAML==6.0.3 pypdf==6.10.0 cryptography==50.0.2 keyring==25.7.0 numpy==2.5.4
           python -m unittest discover -s tests -v
+          python -m unittest discover -s server/tests -v
       - name: Check and rebuild the interface
         working-directory: web
         run: |

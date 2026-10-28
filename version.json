@@ -1,7 +1,7 @@
 {
-  "version": "1.2.2",
+  "version": "1.2.3",
   "architecture": "arm64",
   "minimumMacOS": "13.0",
-  "sourceRelease": "1.2.2-notebooks",
+  "sourceRelease": "1.2.3-library",
   "personalDataIncluded": false
 }

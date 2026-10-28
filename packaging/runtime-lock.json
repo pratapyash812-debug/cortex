@@ -1,0 +1,19 @@
+{
+  "keyring": "25.7.0",
+  "jaraco.context": "6.1.2",
+  "jaraco.functools": "4.6.0",
+  "more-itertools": "11.2.1",
+  "jaraco.classes": "3.4.0",
+  "pywin32-ctypes": "0.2.3",
+  "cryptography": "50.0.2",
+  "cffi": "2.1.1",
+  "pycparser": "3.12",
+  "pyyaml": "6.0.3",
+  "pywebview": "6.2.1",
+  "typing_extensions": "4.16.0",
+  "bottle": "0.13.4",
+  "proxy_tools": "0.1.0",
+  "pythonnet": "3.2.1",
+  "clr_loader": "0.3.1",
+  "pypdf": "6.10.0"
+}

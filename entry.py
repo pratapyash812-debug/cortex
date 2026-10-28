@@ -3,7 +3,7 @@ from pathlib import Path
 import os,sys
 
 ROOT=Path(__file__).resolve().parent
-if not getattr(sys,'frozen',False):sys.path.insert(0,str(ROOT/'app/server'))
+if not getattr(sys,'frozen',False):sys.path.insert(0,str(ROOT/'server'))
 if sys.platform=='darwin':
     os.environ.setdefault('LOCALAPPDATA',str(Path.home()/'Library/Application Support'))
 
