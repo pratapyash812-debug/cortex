@@ -33,3 +33,18 @@ export function noteNavigation(notes:NoteInfo[],groups:Record<string,string[]>){
 }
 
 export type NoteNavigation=ReturnType<typeof noteNavigation>;
+
+/** One New note action: current section, selected notebook, or unfiled capture. */
+export function newNoteDestination(navigation:NoteNavigation,scope:string,currentPath:string,explicitNotebook?:string):{folder:string;notebook?:string}{
+  if(explicitNotebook){
+    if(!navigation.children.has(explicitNotebook))throw new Error('This notebook is no longer available. Reopen it before adding a note.');
+    return {folder:navigation.subject(explicitNotebook),notebook:explicitNotebook};
+  }
+  if(!scope)return {folder:''};
+  if(navigation.subject(currentPath)===scope){
+    const current=navigation.view(currentPath);
+    if(current.isNotebook)return {folder:scope,notebook:current.primary};
+  }
+  const root=navigation.roots.find(note=>navigation.subject(note.path)===scope&&navigation.children.has(note.path));
+  return root?{folder:scope,notebook:root.path}:{folder:scope};
+}

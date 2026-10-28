@@ -10,7 +10,7 @@ test('notebook contents preserve saved chapter order and offer the original over
   const tree=host.render(),pages=nodes(tree,n=>n.props?.className==='contents-page');
   assert.deepEqual(pages.map(n=>n.props['aria-label']),['Open Costs','Open Markets']);pages[1].props.onClick();assert.deepEqual(opened,['Market.md']);
   nodes(tree,n=>n.props?.className==='contents-overview')[0].props.onClick();assert.equal(overview,1);
-  nodes(tree,n=>n.type==='button'&&n.props.className==='btn small')[0].props.onClick();assert.equal(added,1);
+  assert.equal(nodes(tree,n=>n.type==='button'&&n.props.className==='btn small').length,0);
  }finally{host?.unmount();env.restore();}
 });
 test('large contents filter page titles while retaining their chapter numbers; an empty book stays a book',()=>{
@@ -22,5 +22,7 @@ test('large contents filter page titles while retaining their chapter numbers; a
   host=env.host(NotebookContents,{path:'Book.md',navigation:nav,busy:false,onOpen(){},onAdd(){},onOverview(){}});
   nodes(host.render(),n=>n.type==='input')[0].props.onChange({target:{value:'Chapter 15'}});
   const items=nodes(host.render(),n=>n.type==='li');assert.equal(items.length,1);assert.equal(items[0].props.value,15);
+  host.unmount();let added=0;host=env.host(NotebookContents,{path:'Empty.md',navigation:nav,busy:false,onOpen(){},onAdd(){added++;},onOverview(){}});
+  nodes(host.render(),n=>n.type==='button'&&n.props.className==='btn small')[0].props.onClick();assert.equal(added,1);
  }finally{host?.unmount();env.restore();}
 });

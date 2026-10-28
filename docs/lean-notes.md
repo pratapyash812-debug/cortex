@@ -1,6 +1,6 @@
 # Using Cortex
 
-Click **New note** and write. **Saved** means the note write completed. If saving fails, keep the window open and use recovery rather than discarding the draft.
+Click **New note** and write. It adds a page to your current notebook or section. From **All notebooks**, it creates an unfiled quick note. **Saved** means the note write completed. If saving fails, keep the window open and use recovery rather than discarding the draft.
 
 - **Notebooks:** open a subject such as Business Economics to see its numbered **Contents**. Choose a section, then a note. All subjects stay visible in the notebook shelf, with note counts. **All notebooks** returns to the complete shelf. The **+** beside **Your notebooks** creates a new notebook, with no placeholder notes. **New note in this notebook** opens a blank page ready to write. The path above a page takes you back to its parent contents.
 - **Overview:** your existing introductory text and links remain in **Open overview note**. Opening a notebook's contents does not edit that text.
@@ -9,7 +9,7 @@ Click **New note** and write. **Saved** means the note write completed. If savin
 - **Graphs and tables:** use **Insert → Graph / chart** or **Table**. Tables automatically have solid visible borders and a shaded header in dark and light mode; existing tables get the same treatment. Paste cells from Excel when useful; Cortex does not recalculate workbooks.
 - **Drawing:** use **Insert → Sketch**. Sketch draws; Drag moves the view. Keep writing above and below the drawing.
 - **Import:** choose **Import folder or files**, select your existing folder, and open the imported subject when it finishes. Original files are preserved. Word content becomes editable notes; long books get a contents note and smaller section subnotes. PowerPoint text, tables and supported embedded pictures become readable notes. Native slide charts, SmartArt, complex Word layouts and spreadsheet calculations may require the original application. Stored spreadsheet values are readable, but Cortex does not recalculate Excel formulas. Conversion limits and failures are reported.
-- **Find:** Ctrl+K searches notes and PDF pages across your entire library, even when one notebook is selected. Choose a PDF result to open its matching page; use the page number, arrows or **Find in this PDF** to read further. Only one page is rendered at a time. PDF search runs locally after background indexing; progress and unavailable text are shown. Image-only scans need selectable text; Cortex does not perform OCR. Ctrl+F searches inside the current note or PDF.
+- **Find:** Ctrl+K searches notes and PDF pages across your entire library, even when one notebook is selected. Press Escape in the library search to return to your notebooks. Choose a PDF result to open its matching page; use the page number, arrows or **Find in this PDF** to read further. Only one page is rendered at a time. PDF search runs locally after background indexing; progress and unavailable text are shown. Image-only scans need selectable text; Cortex does not perform OCR. Ctrl+F searches inside the current note or PDF.
 
 ## Keeping your work safe
 

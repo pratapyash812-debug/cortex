@@ -63,7 +63,7 @@ def stage(destination:Path,runtime:Path,pypdf_site:Path|None=None):
     for name in ('install.py','uninstall.py','Install Cortex.cmd','deploy_release.py'):
         shutil.copy2(ROOT/'packaging'/name,destination/name)
     files={p.relative_to(destination).as_posix():digest(p) for p in destination.rglob('*') if p.is_file()}
-    manifest={'product':'Cortex','version':'1.2.3-library','python':sys.version.split()[0],'runtimePackages':lock,'files':files}
+    manifest={'product':'Cortex','version':'1.2.4-minimal','python':sys.version.split()[0],'runtimePackages':lock,'files':files}
     (destination/'release.json').write_text(json.dumps(manifest,indent=2),encoding='utf-8')
     print(json.dumps({'destination':str(destination),'files':len(files),'bytes':sum(p.stat().st_size for p in destination.rglob('*') if p.is_file())},indent=2))
     return manifest

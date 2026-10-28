@@ -25,3 +25,17 @@ test('stale, duplicated and cyclic grouping cannot hide or recursively repeat a 
     nav.roots.forEach(n=>walk(n.path));assert.deepEqual(seen.sort(),notes.map(n=>n.path).sort());
   }finally{env.restore();}
 });
+
+test('New note follows the current nested section, with an unfiled quick-capture path',()=>{
+ const env=environment();try{
+  const {noteNavigation,newNoteDestination}=env.load('navigation.ts');
+  const nav=noteNavigation([note('Business.md','Business'),note('Business/Book.md','Book'),note('Business/Book/Revenue.md','Revenue'),note('Marketing.md','Marketing')],{'Business.md':['Business/Book.md'],'Business/Book.md':['Business/Book/Revenue.md'],'Marketing.md':[]});
+  assert.deepEqual(newNoteDestination(nav,'Business','Business/Book/Revenue.md'),{folder:'Business',notebook:'Business/Book.md'});
+  assert.deepEqual(newNoteDestination(nav,'Business','Business/Book.md'),{folder:'Business',notebook:'Business/Book.md'});
+  assert.deepEqual(newNoteDestination(nav,'Marketing','Business/Book/Revenue.md'),{folder:'Marketing',notebook:'Marketing.md'});
+  assert.deepEqual(newNoteDestination(nav,'','Business/Book/Revenue.md'),{folder:''});
+  assert.deepEqual(newNoteDestination(nav,'School','Business/Book/Revenue.md'),{folder:'School'});
+  assert.deepEqual(newNoteDestination(nav,'Business','Business/Book/Revenue.md','Business.md'),{folder:'Business',notebook:'Business.md'});
+  assert.throws(()=>newNoteDestination(nav,'Business','','Missing.md'),/no longer available/);
+ }finally{env.restore();}
+});

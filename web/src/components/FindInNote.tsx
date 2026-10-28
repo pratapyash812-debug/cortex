@@ -15,8 +15,8 @@ export function FindInNote({ editorRef, onClose }: { editorRef: MutableRefObject
     const bar = barRef.current;
     if (!bar) return;
     const opener = openerRef.current;
-    const page = bar.closest('.page');
-    const toolbar = page?.querySelector<HTMLElement>('.page-tools');
+    const page = bar.closest('.lean-document') ?? bar.closest('.page');
+    const toolbar = page?.querySelector<HTMLElement>('.document-toolbar') ?? page?.querySelector<HTMLElement>('.page-tools');
     const editor = page?.querySelector<HTMLElement>('.editor-host .ProseMirror[contenteditable="true"]');
     const measure = () => {
       if (toolbar) setOffset(Math.max(0, Number.parseFloat(window.getComputedStyle(toolbar).top) || 0) + toolbar.getBoundingClientRect().height + 8);
