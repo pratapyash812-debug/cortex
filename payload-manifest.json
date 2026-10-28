@@ -1,7 +1,7 @@
 {
   ".gitattributes": "d7306c327db5677045fec19c49812600befb6c544c25fd43b8db22680fd3075e",
   ".github/workflows/build-macos.yml": "5397c18ebe51f75df413e93a50607496e848451f3a48b60f06a015b9485f6468",
-  ".gitignore": "0a21b61552314f01c51a9ed9c7db21531c0a4ece2c73b14e3f9fa2eceee97bd8",
+  ".gitignore": "0cf0a1d3c34778309abe44c17063506ffcbed2c5191f2f6b280ac35f1afdf76a",
   "Build DMG.command": "209005161368d0766852759dcd5869bd9ddd3d267f79eecc5a6e91f30fd9d71d",
   "Cortex.spec": "994f00207098e41a12ecc919ce68d7b9ce978b280cf1f2528984dbf18e0dc115",
   "README.md": "eb51b5d9f7d4dd686e1e053a98f7d1b50be11fde58f24cf869eb743026e9e34c",
@@ -542,7 +542,7 @@
   "app/web/dist/mathlive-fonts/KaTeX_Typewriter-Regular.woff2": "71d517d67827787cfabdf186914cc3358eda539e37931941f2b2fd4a21f68c0b",
   "app/web/dist/mathlive-fonts/LICENSE.txt": "3caebd18611959ca725ab976a004d408017eb1d7093d6c9b9b09c5a4790eaff8",
   "app/web/dist/vite.svg": "4a748afd443918bb16591c834c401dae33e87861ab5dbad0811c3a3b4a9214fb",
-  "build_macos.py": "b02600851db6ead6186c3b65ac3d5e17b021ab03b74c79ca13c36836042f58da",
+  "build_macos.py": "62ab5ab924aa09922b8ca2bfa07df791caa3dcdf44b66d70be5b246dc4261e68",
   "entry.py": "1dc827e01a0f52c540221bbe82676a3ae4351ac06a1b8b48d1606c601a3d743b",
   "requirements-macos.txt": "077c355e0a78a24bb40756af890fe22163612b0305bb260db6a8c49119b46529",
   "smoke_test.py": "6314c5fb7c2ef36c33b34c30521d48abc2a28a03269ed77bc11051e06c1ffa3c",

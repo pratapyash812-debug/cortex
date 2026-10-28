@@ -5,7 +5,13 @@ import argparse,hashlib,json,os,platform,plistlib,shutil,subprocess,sys,time,ven
 ROOT=Path(__file__).resolve().parent
 
 def run(args,**options):
-    return subprocess.run([str(a) for a in args],check=True,**options)
+    try:
+        return subprocess.run([str(a) for a in args],check=True,**options)
+    except subprocess.CalledProcessError as error:
+        # Captured packaged-app diagnostics must survive a failed CI gate.
+        for output in (error.stdout,error.stderr):
+            if output:print(output.decode('utf-8',errors='replace') if isinstance(output,bytes) else output,file=sys.stderr)
+        raise
 
 def verify_inputs():
     manifest=json.loads((ROOT/'payload-manifest.json').read_text(encoding='utf-8'))
@@ -34,7 +40,7 @@ def build(destination,developer_id=None,notary_profile=None):
     else:env.pop('CORTEX_CODESIGN_IDENTITY',None)
     run([python,'-m','PyInstaller','--noconfirm','--clean','--distpath',destination/'dist','--workpath',destination/'work',ROOT/'Cortex.spec'],cwd=ROOT,env=env)
     app=destination/'dist/Cortex.app';executable=app/'Contents/MacOS/Cortex'
-    run(['lipo','-verify_arch','arm64',executable]);run(['codesign','--verify','--deep','--strict',app])
+    run(['lipo',executable,'-verify_arch','arm64']);run(['codesign','--verify','--deep','--strict',app])
     backend=run([executable,'--cortex-self-test'],capture_output=True,text=True,timeout=120)
     (destination/'backend-smoke.json').write_text(backend.stdout,encoding='utf-8')
     if not json.loads(backend.stdout.strip().splitlines()[-1]).get('ok'):raise RuntimeError('Packaged backend smoke check failed')
