@@ -599,7 +599,7 @@
   "server/tests/test_student_routes.py": "45f18fc12267199aae91a84eeaa96edbed5998007bce64095ea1a2681c9574a2",
   "server/tests/test_study.py": "0ac871f03c43fe4e29f3955e686e6e857bf861e8f9d430fd4ac6f058d6b2ef84",
   "server/tests/test_sync.py": "421f0795f39d8f2d071d42447a6c2861b5bd5751b18af55a539a932e1a25d2d9",
-  "server/tests/test_vault_lock.py": "170573a049c51629988b6a4b7662b80f3173a467b668fecd65d37890a1446ebd",
+  "server/tests/test_vault_lock.py": "151667c7d628793b097630a12e308fb5c988f1402b803e0908d177063f7791a4",
   "server/tests/test_word_import_transactions.py": "505d3fa19a478cc064a272de95764143a042ce4d2dc3bda87b6aac68ffce0133",
   "server/tests/test_workflows.py": "edaa4e3d5bfc3e1c8e5016db384ca2328375b6cd618920fec9a607a79ba60a40",
   "server/tests/word_fixtures.py": "bba5977f9981338e0f53a9060e49a1094b5dd86b06435df8b8ae5d8e685b8133",

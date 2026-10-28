@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import errno
+import faulthandler
 import hashlib
 import json
 import os
@@ -42,6 +43,7 @@ def wait_file(path, seconds=10):
 
 def worker(mode, root, role):
     # Every helper has a hard deadline, including a deliberately broken worker.
+    faulthandler.dump_traceback_later(8)
     watchdog = threading.Timer(18, lambda: os._exit(99))
     watchdog.daemon = True
     watchdog.start()
@@ -69,7 +71,8 @@ def worker(mode, root, role):
             put_json(root / f'{role}.acquired', {'pid': os.getpid()})
     elif mode == 'server':
         httpd = server.make_server(str(vault), 0, background_ai=False, watch=False,
-                                  background_sync=False, background_reminders=False)
+                                  background_sync=False, background_reminders=False,
+                                  secrets=TestSecrets())
         instance = server.Handler.vault
         original_entry = instance.entry
         seen = False
@@ -94,6 +97,15 @@ def worker(mode, root, role):
             httpd.server_close()
             server.Handler.sync.stop()
     watchdog.cancel()
+    faulthandler.cancel_dump_traceback_later()
+
+
+class TestSecrets:
+    """Writer tests never consult or modify the machine's credential store."""
+    available=False
+    def get(self,_vault_id):return None
+    def set(self,*_args):raise AssertionError('Writer tests must not store credentials')
+    def delete(self,*_args):raise AssertionError('Writer tests must not delete credentials')
 
 
 class VaultWriterLockTests(unittest.TestCase):
