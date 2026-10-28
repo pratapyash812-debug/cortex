@@ -11,7 +11,7 @@ notes, course materials, recovery drafts, settings, credentials or Windows runti
 
 ## Build on GitHub
 
-Push this repository to `main`. The **Build Cortex for Apple Silicon** workflow
+Push this repository to `main` or `codex/macos-arm64`. The **Build Cortex for Apple Silicon** workflow
 uses GitHub's standard `macos-15` arm64 runner and CPython 3.13. It checks the
 payload, tests/rebuilds the frontend, builds `Cortex.app`, tests the actual bundled
 PDF worker, opens a disposable Cocoa/WebKit window, and verifies a read-only DMG.

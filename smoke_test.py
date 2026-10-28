@@ -15,7 +15,9 @@ def backend_smoke():
     import server,pdf_index,auto_backup
     with tempfile.TemporaryDirectory(prefix='cortex-mac-check-') as directory:
         root=Path(directory);vault=server.Vault(root/'notebook');book=vault.create_notebook('Economics');page=vault.add_sheet(book['path'],'Worked example')
-        vault.save(page['created'],'# Revenue\n\n$y=2x+3$\n\n| Year | Sales |\n| --- | --- |\n| 2026 | 3000 |\n')
+        vault.save(page['created'],'# Revenue\n\n$y=2x+3$\n\n| Year | Sales |\n| --- | --- |\n| 2026 | 3000 |\n',None)
+        saved=(vault.root/page['created']).read_text(encoding='utf-8')
+        assert '$y=2x+3$' in saved and '| 2026 | 3000 |' in saved
         pdf=vault.root/'Course.pdf';make_pdf(pdf);original=hashlib.sha256(pdf.read_bytes()).hexdigest()
         index=pdf_index.DocumentIndex(vault,root/'search')
         try:

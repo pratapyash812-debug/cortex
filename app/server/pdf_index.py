@@ -45,7 +45,10 @@ def _worker(path,start,root):
     if root:sys.path.append(root)
     def emit(value):print(json.dumps(value,ensure_ascii=True),flush=True)
     try:
-        if os.name=='posix':
+        # Darwin does not support Linux's address-space limit reliably, and
+        # arm64 executables reserve a much larger virtual address space. The
+        # parent still owns the worker and enforces its extraction timeout.
+        if sys.platform.startswith('linux'):
             import resource
             resource.setrlimit(resource.RLIMIT_AS,(WORKER_MEMORY_BYTES,WORKER_MEMORY_BYTES))
         from pypdf import PdfReader

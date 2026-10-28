@@ -26,6 +26,17 @@ class MacPackagingTests(unittest.TestCase):
     def test_source_backend_smoke_uses_only_a_disposable_notebook(self):
         self.assertTrue(json.loads(smoke_test.backend_smoke())['ok'])
 
+    def test_darwin_pdf_worker_extracts_text_without_linux_memory_limits(self):
+        import contextlib,io,tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'Course.pdf';smoke_test.make_pdf(path)
+            output=io.StringIO()
+            with patch.object(sys,'platform','darwin'),contextlib.redirect_stdout(output):
+                pdf_index._worker(str(path),0,'')
+            events=[json.loads(line) for line in output.getvalue().splitlines()]
+            self.assertTrue(any('liquidity' in event.get('text','') for event in events))
+            self.assertTrue(events[-1].get('done'))
+
     def test_windows_cannot_silently_produce_a_fake_mac_disk_image(self):
         with patch.object(sys,'platform','win32'):
             with self.assertRaisesRegex(RuntimeError,'Apple Silicon Mac'):build_macos.build(ROOT/'should-not-exist')
