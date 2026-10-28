@@ -1,6 +1,6 @@
 {
   ".gitattributes": "d7306c327db5677045fec19c49812600befb6c544c25fd43b8db22680fd3075e",
-  ".github/workflows/build-macos.yml": "8e6d1b402499773d81750e8282e7d06084c2c4aac36cc475ce6559cf872446ff",
+  ".github/workflows/build-macos.yml": "34bba42960682ba1cd1057cb0ea36350cf4a6b43ba4c3e0fc288d5cd7f11061d",
   ".gitignore": "4dda93e9593c9ca40c7c18d5ff7c70fa70a32a5745fead44b25f640f2ef89497",
   "Build DMG.command": "209005161368d0766852759dcd5869bd9ddd3d267f79eecc5a6e91f30fd9d71d",
   "Cortex.spec": "0ac56c2454a27af5c70cb8f66fc60e9212673976f0c9634eb3ae21286dc986b0",
@@ -572,7 +572,7 @@
   "server/tests/test_canvas_save_integrity.py": "36570403b8e1740312a526ff10c45dacbe48fb5fdd9a20033da94bc81741fa56",
   "server/tests/test_close_guard.py": "ebc005c26e74d15e6b287c32a44dbf877e58724ece13cf1019c701e8a88e9de9",
   "server/tests/test_cortex.py": "440db4af87c998cabfd85e0df4131094b300587de39a8ab253e9a58acfa93e1c",
-  "server/tests/test_course_import.py": "3e7084dd615c54758f065c89c8061eb573dff2630517c1d45e0b461c5ce98ea5",
+  "server/tests/test_course_import.py": "d74c11c91bbf85c5e6bb1a631c55669148651fe0a74fd99f7a9d557df6c9bee2",
   "server/tests/test_daily_import_transactions.py": "734934cb609606eab3ef46b4bf781ce98af0ad027958990c5f110a191a48080c",
   "server/tests/test_docx_math.py": "7cf8f2e7927b0cfb7f80cd82aaf5e877ecc88393186c2d500b782755dc0bb06f",
   "server/tests/test_figures.py": "29a31a10d0c08633f021e4d4163b030ac57f97c55ff681794a0ae16025785a78",

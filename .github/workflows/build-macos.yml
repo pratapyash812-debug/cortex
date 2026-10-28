@@ -21,6 +21,10 @@ jobs:
           python-version: '3.13'
           architecture: arm64
       - name: Check platform and source payload
+        env:
+          # Use the runner's physical temp directory, avoiding macOS's /var
+          # alias when fixtures compare their paths with resolved vault paths.
+          TMPDIR: ${{ runner.temp }}
         run: |
           python -c "import platform; assert platform.machine() == 'arm64'"
           python -m pip install PyYAML==6.0.3 pypdf==6.10.0 cryptography==50.0.2 keyring==25.7.0 numpy==2.5.4

@@ -103,13 +103,21 @@ class CourseImportTests(unittest.TestCase):
         self.assertNotIn('DO_NOT_EXPAND',result['Course import/Notes/Entity.docx.md'])
 
     def test_archive_utf8_name_without_flag_is_losslessly_repaired(self):
-        class MissingFlag(zipfile.ZipInfo):
-            def _encodeFilenameFlags(self):
-                return self.filename.encode('utf-8'),self.flag_bits
         buffer=io.BytesIO()
         with zipfile.ZipFile(buffer,'w') as archive:
-            archive.writestr(MissingFlag('VØ/Æble.docx'),docx(p('Dansk æøå')))
-        result=course_import.convert_upload(buffer.getvalue(),'Course.zip')
+            archive.writestr('VØ/Æble.docx',docx(p('Dansk æøå')))
+        # Alter the actual ZIP headers, rather than overriding a private
+        # ZipInfo writer hook whose behaviour differs between Python versions.
+        broken=bytearray(buffer.getvalue());end=broken.rfind(b'PK\x05\x06')
+        central=int.from_bytes(broken[end+16:end+20],'little')
+        self.assertEqual(broken[:4],b'PK\x03\x04');self.assertEqual(broken[central:central+4],b'PK\x01\x02')
+        for offset in (6,central+8):
+            flags=int.from_bytes(broken[offset:offset+2],'little')
+            broken[offset:offset+2]=(flags&~0x800).to_bytes(2,'little')
+        with zipfile.ZipFile(io.BytesIO(broken)) as archive:
+            self.assertFalse(archive.infolist()[0].flag_bits&0x800)
+            self.assertNotEqual(archive.infolist()[0].filename,'VØ/Æble.docx')
+        result=course_import.convert_upload(bytes(broken),'Course.zip')
         self.assertIn('Course import/Sources/VØ/Æble.docx',result)
         self.assertTrue(any('filename encoding repaired' in message for message in result['__warnings__']))
 
