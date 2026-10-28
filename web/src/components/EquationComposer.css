@@ -1,0 +1,43 @@
+.equation-composer { display: grid; gap: 14px; min-width: 0; color: var(--fg); }
+.equation-intro { margin: 0; max-width: 64ch; color: var(--muted); font-size: 13px; line-height: 1.55; }
+.equation-structures { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; padding: 5px; border: 1px solid var(--line); border-radius: 16px; background: var(--list); }
+.equation-structures button { display: grid; justify-items: center; align-content: center; gap: 2px; min-height: 64px; padding: 6px; border: 0; border-radius: 11px; background: transparent; color: var(--fg); font: inherit; font-size: 11px; }
+.equation-glyph { font: 24px/1.15 Georgia, serif; }
+.equation-structures button:hover:not(:disabled), .equation-symbols button:hover:not(:disabled) { background: var(--hover); }
+.equation-structures button:active:not(:disabled), .equation-symbols button:active:not(:disabled) { opacity: .8; }
+.equation-structures button:disabled, .equation-symbols button:disabled { opacity: .4; cursor: default; }
+.equation-visual { display: grid; align-items: center; min-height: 104px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; background: var(--bg); overflow-x: auto; }
+.equation-visual:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 16%, transparent); }
+.equation-visual math-field { display: block; width: 100%; min-width: 0; border: 0; border-radius: 8px; background: transparent; color: var(--fg); font-size: 25px; --caret-color: var(--accent); --selection-background-color: color-mix(in srgb, var(--accent) 22%, transparent); --contains-highlight-background-color: var(--active); --smart-fence-color: var(--accent); --placeholder-color: var(--muted); }
+.equation-visual math-field::part(virtual-keyboard-toggle) { display: none; }
+.equation-secondary { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.equation-symbols { display: flex; flex-wrap: wrap; gap: 2px; }
+.equation-symbols button { display: grid; place-items: center; min-width: 38px; min-height: 40px; border: 0; border-radius: 10px; background: transparent; color: var(--fg); font: 21px/1.1 Georgia, serif; }
+.equation-edit-actions { display: flex; flex-wrap: wrap; gap: 5px; }
+.equation-placement { display: flex; width: fit-content; padding: 3px; border: 1px solid var(--line); border-radius: 11px; background: var(--list); }
+.equation-placement button { min-height: 34px; padding: 5px 12px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font: inherit; font-size: 12px; }
+.equation-placement button[aria-pressed="true"] { background: var(--bg); color: var(--fg); box-shadow: 0 1px 4px var(--glass-shadow); }
+.equation-examples, .equation-source { min-width: 0; font-size: 12px; color: var(--muted); }
+.equation-examples summary, .equation-source summary { width: fit-content; padding: 4px 0; cursor: pointer; color: var(--fg); }
+.equation-examples > div { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 8px; }
+.equation-source label { display: grid; gap: 5px; margin-top: 8px; }
+.equation-source textarea { min-height: 90px; resize: vertical; font: 13px/1.5 var(--mono); }
+.equation-message, .equation-discard { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--list); font-size: 13px; }
+.equation-message > span, .equation-discard > span { flex: 1 1 220px; }
+.equation-error { margin: 0; padding: 9px 12px; border-radius: 10px; color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, var(--bg)); font-size: 13px; line-height: 1.5; }
+.equation-actions { align-items: center; margin-top: 0; }
+.equation-actions > span { margin-right: auto; }
+.equation-keyboard { position: relative; min-width: 0; overflow: hidden; border-radius: 12px; --keyboard-zindex: 1; --keyboard-background: var(--side); --keyboard-border: var(--line); --keyboard-toolbar-text: var(--fg); --keyboard-toolbar-text-active: var(--fg); --keyboard-toolbar-background-hover: var(--hover); --keyboard-toolbar-background-selected: var(--active); --keyboard-accent-color: var(--accent); --keycap-background: var(--bg); --keycap-background-hover: var(--hover); --keycap-text: var(--fg); --keycap-border: var(--line); --keycap-border-bottom: var(--line); --keycap-primary-background: var(--accent); --keycap-primary-text: var(--on-accent); --keycap-secondary-background: var(--list); --keycap-secondary-text: var(--fg); --keycap-secondary-border: var(--line); --keyboard-horizontal-rule: 1px solid var(--line); }
+@media (max-width: 620px) {
+  .equation-structures { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .equation-structures button { min-height: 58px; }
+  .equation-visual { padding: 10px; }
+  .equation-visual math-field { font-size: 23px; }
+  .equation-symbols button { min-width: 42px; min-height: 44px; }
+  .equation-placement button { min-height: 40px; }
+  .equation-actions { flex-wrap: wrap; }
+  .equation-actions > span { flex-basis: 100%; }
+  .equation-keyboard { min-width: min(320px, 100%); }
+}
+@media (prefers-reduced-motion: reduce) { .equation-composer * { scroll-behavior: auto; transition: none; } }
+.equation-actions { position: sticky; bottom: 0; z-index: 2; padding: 10px 0; border-top: 1px solid var(--line); background: var(--bg); }

@@ -1,0 +1,48 @@
+name: Build Cortex for Apple Silicon
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, codex/macos-arm64]
+permissions:
+  contents: read
+concurrency:
+  group: cortex-macos-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  macos-arm64:
+    runs-on: macos-15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.13'
+          architecture: arm64
+      - name: Check platform and source payload
+        run: |
+          python -c "import platform; assert platform.machine() == 'arm64'"
+          python -m pip install PyYAML==6.0.3 pypdf==6.10.0
+          python -m unittest discover -s tests -v
+      - name: Check and rebuild the interface
+        working-directory: web
+        run: |
+          npm ci
+          npm run test:unit
+          npm run lint
+          npm run build
+      - name: Build and test the complete Mac app and disk image
+        run: python build_macos.py --output output/ci
+      - name: Save the disk image and verification receipts
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: Cortex-macOS-AppleSilicon
+          path: |
+            output/ci/*.dmg
+            output/ci/*.sha256
+            output/ci/*smoke.json
+            output/ci/build-receipt.json
+            output/ci/resolved-build-requirements.txt
+          if-no-files-found: error
+          retention-days: 14

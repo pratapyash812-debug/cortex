@@ -1,0 +1,56 @@
+.find-note {
+  position: sticky;
+  z-index: 18;
+  top: 58px;
+  margin: 0 0 12px auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: min(420px, 100%);
+  padding: 5px 6px 5px 12px;
+  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--bg) 90%, transparent);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .16);
+  backdrop-filter: blur(18px) saturate(1.35);
+}
+.find-note input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+}
+.find-note-count { min-width: 64px; color: var(--muted); text-align: center; font-size: 11px; white-space: nowrap; }
+.find-note-button {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+}
+.find-note-button:hover:not(:disabled) { background: var(--hover); }
+.find-note-button:disabled { opacity: .38; cursor: default; }
+@media (max-width: 620px) {
+  .find-note { width: 100%; }
+}
+
+
+.ProseMirror .cortex-find-match {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-radius: 2px;
+  box-shadow: inset 0 -1px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.ProseMirror .cortex-find-match-active {
+  background: color-mix(in srgb, var(--accent) 38%, transparent);
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}

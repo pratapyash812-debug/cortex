@@ -1,0 +1,78 @@
+:root[data-reading-focus="true"] .app {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+:root[data-reading-focus="true"] .app > .sidebar,
+:root[data-reading-focus="true"] .app > .list {
+  display: none !important;
+}
+
+.reading-focus-bar {
+  position: fixed;
+  z-index: 40;
+  bottom: max(16px, env(safe-area-inset-bottom));
+  right: max(14px, env(safe-area-inset-right));
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 4px 5px 4px 13px;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+  border: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  border-radius: 999px;
+  box-shadow: 0 7px 22px var(--glass-shadow), inset 0 1px 0 rgba(255, 255, 255, .2);
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  animation: reading-focus-appear .18s ease-out both;
+}
+
+.reading-focus-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.reading-focus-exit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 44px;
+  min-height: 40px;
+  padding: 0 12px;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  border: 0;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  transition: background-color .14s ease, transform .14s ease;
+}
+
+.reading-focus-exit:hover { background: color-mix(in srgb, var(--fg) 12%, transparent); }
+.reading-focus-exit:active { transform: scale(.97); }
+.reading-focus-exit:focus-visible { outline-offset: 1px; }
+
+@keyframes reading-focus-appear {
+  from { opacity: 0; transform: translateY(-5px) scale(.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (max-width: 540px) {
+  .reading-focus-bar {
+    bottom: max(8px, env(safe-area-inset-bottom));
+    right: max(8px, env(safe-area-inset-right));
+  }
+  .reading-focus-status { display: none; }
+  .reading-focus-exit { min-height: 44px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reading-focus-bar { animation: none; }
+  .reading-focus-exit { transition: none; }
+}

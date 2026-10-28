@@ -1,0 +1,2 @@
+# Preserve the exact input bytes checked by payload-manifest.json on every OS.
+* -text

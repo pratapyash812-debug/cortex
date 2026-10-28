@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+output/
+build-icon.icns
+*.dmg
+*.app/
+web/node_modules/
+web/dist/
+.DS_Store
