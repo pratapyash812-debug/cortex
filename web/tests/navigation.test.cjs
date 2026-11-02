@@ -3,6 +3,10 @@ const test=require('node:test');
 const {environment}=require('./helpers/paletteHost.cjs');
 const note=(path,title=path)=>({path,title,folder:path.includes('/')?path.slice(0,path.lastIndexOf('/')):'',pinned:false,modified:1});
 
+test('opening a just-created section retains its notebook before the refreshed tree renders',()=>{
+ const e=environment();try{const {noteNavigation,openedNoteScope}=e.load('navigation.ts');const nav=noteNavigation([note('Study notebook.md')],{'Study notebook.md':[]});assert.equal(openedNoteScope(nav,note('Study notebook/Financial analysis.md')),'Study notebook');}finally{e.restore();}
+});
+
 test('nested subjects have one parent trail and retain every subnote order',()=>{
   const env=environment();try{
     const {noteNavigation}=env.load('navigation.ts');

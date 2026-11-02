@@ -10,6 +10,8 @@
   "course_import",
   "desktop",
   "docx_import",
+  "docx_export",
+  "docx_math_export",
   "figures",
   "formula",
   "folder_import",

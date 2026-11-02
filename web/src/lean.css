@@ -66,3 +66,10 @@ html,body,#root{overflow:hidden}.lean-app{height:100%}
 .lean-app:has(>.lean-sidebar) .topbar-new-note{display:none}
 .contents-total{font-size:12px;font-weight:400;color:var(--muted);margin-left:10px;white-space:nowrap}
 .contents-empty{padding:18px 0}.contents-empty p{margin-top:0}
+.document-kind{max-width:var(--page-width);margin:20px auto -12px;padding:0 28px;color:var(--muted);font-size:11px;letter-spacing:.07em;text-transform:uppercase}
+.writing-format{display:flex;align-items:center;gap:3px;flex-wrap:wrap}.writing-format select{max-width:135px}
+.document-status{max-width:var(--page-width);margin:16px auto 28px;padding:8px 28px;color:var(--muted);font-size:11px;border-top:1px solid var(--line)}
+.page-appearance label{display:grid;gap:5px;font-size:12px;padding:8px 12px}.page-appearance select{color:var(--fg);background:var(--bg);border:1px solid var(--line);padding:6px;min-width:145px}.page-appearance p{padding:0 12px;max-width:190px}
+.editor-host .milkdown{font-family:inherit;--crepe-font-default:inherit;--crepe-font-title:inherit}
+.editor-host .ProseMirror mark{background:#ffe08a;color:#29220e;border-radius:2px;padding:0 1px}.editor-host .ProseMirror u{text-underline-offset:3px}
+.outline-note>svg{flex-shrink:0;color:var(--muted)}

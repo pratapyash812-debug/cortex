@@ -232,6 +232,7 @@ class Renderer:
     def inline(self, text: str) -> str:
         text = CODE_SPAN.sub(lambda m: self._hold(f"<code>{esc(m.group(2).strip())}</code>"), text)
         text = MATH.sub(lambda m: self._hold(f'<span class="math">{esc(m.group(0))}</span>'), text)
+        text = re.sub(r'<u>(.+?)</u>', lambda m: self._hold('<u>' + self.inline(m.group(1)) + '</u>'), text)
 
         def wiki(m: re.Match) -> str:
             bang, raw = m.groups()
@@ -535,6 +536,12 @@ def export_note_html(vault, rel: str, *, print_dialog: bool = False) -> str:
     head = f"<h1>{icon}{esc(p.stem)}</h1>" + (f'<div class="tags">{tags}</div>' if tags else "")
     script = '<script>window.addEventListener("load",function(){setTimeout(function(){window.print()},250)})</script>' if print_dialog else ""
     css = CSS
+    appearance = e.meta.get('documentStyle', {})
+    if isinstance(appearance, dict):
+        font = {'serif':'Georgia,serif','sans':'Segoe UI,Arial,sans-serif','mono':'Consolas,monospace'}.get(appearance.get('font') if isinstance(appearance.get('font'), str) else '')
+        size = appearance.get('size')
+        if font: css += f'\nmain{{font-family:{font}}}'
+        if size in (14,16,18,20,24): css += f'\nmain{{font-size:{size}px}}'
     if _MATH_MARKUP.search(body):
         assets = _katex_assets()
         if assets:

@@ -34,6 +34,11 @@ export function noteNavigation(notes:NoteInfo[],groups:Record<string,string[]>){
 
 export type NoteNavigation=ReturnType<typeof noteNavigation>;
 
+/** A just-created page/section can open before React has rendered the refreshed tree. */
+export function openedNoteScope(navigation:NoteNavigation,note:NoteInfo):string{
+  return navigation.subject(note.path)||note.folder.split('/')[0]||'';
+}
+
 /** One New note action: current section, selected notebook, or unfiled capture. */
 export function newNoteDestination(navigation:NoteNavigation,scope:string,currentPath:string,explicitNotebook?:string):{folder:string;notebook?:string}{
   if(explicitNotebook){

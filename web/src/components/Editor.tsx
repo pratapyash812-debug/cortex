@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from 'react';
 import { Crepe } from '@milkdown/crepe';
 import { editorViewCtx, editorViewOptionsCtx, parserCtx, serializerCtx, remarkStringifyOptionsCtx } from '@milkdown/kit/core';
 import { callCommand, insert, replaceAll } from '@milkdown/kit/utils';
-import { toggleStrongCommand, toggleEmphasisCommand, wrapInHeadingCommand, wrapInBulletListCommand, liftListItemCommand } from '@milkdown/kit/preset/commonmark';
-import { insertTableCommand } from '@milkdown/kit/preset/gfm';
+import { toggleStrongCommand, toggleEmphasisCommand, wrapInHeadingCommand, wrapInBlockquoteCommand } from '@milkdown/kit/preset/commonmark';
+import { insertTableCommand,toggleStrikethroughCommand } from '@milkdown/kit/preset/gfm';
+import {toggleMark} from '@milkdown/kit/prose/commands';
+import {undo,redo} from '@milkdown/kit/prose/history';
 import { TextSelection } from '@milkdown/kit/prose/state';
 import '@milkdown/crepe/theme/common/style.css';
 import '@milkdown/crepe/theme/frame.css';
@@ -11,6 +13,10 @@ import { api, type NoteInfo } from '../api';
 import { inlineCanvasPlugin } from '../inlineCanvas';
 import {noteMarkdown} from '../noteMarkdown';
 import {pasteEquations} from '../mathPastePlugin';
+import {formatList} from '../writingCommands';
+import {writingRemark,underlineMark,highlightMark} from '../writingMarks';
+import {PAGE_FONTS,pageStyle,wordCount} from '../writing';
+export type FormatAction='bold'|'italic'|'underline'|'highlight'|'strike'|'undo'|'redo'|'heading'|'heading1'|'heading2'|'heading3'|'paragraph'|'bullet'|'numbered'|'quote'|'table';
 import { createInsertRequest, figureId, type InsertRequest, type InsertKind } from '../insert';
 export type { InsertRequest, InsertKind } from '../insert';
 import { toEditor, fromEditor, wikiTarget, singleLineMath } from '../wikilinks';
@@ -31,7 +37,7 @@ export interface EditorHandle {
   requestEquation: () => boolean;
   requestInsert: (kind: InsertKind) => boolean;
   captureCanvasInsert: () => ((canvasPath: string) => void) | null;
-  format: (action: 'bold' | 'italic' | 'heading' | 'heading1' | 'heading2' | 'heading3' | 'paragraph' | 'bullet' | 'table') => boolean;
+  format: (action: FormatAction) => boolean;
   insertMarkdown: (md: string) => void;
   /** Puts ![[name]] on a line of its own at the cursor, with a player under it for audio. `path` is where the file lives in the vault. */
   insertEmbed: (name: string, path: string) => void;
@@ -55,6 +61,8 @@ interface Props {
   onCanvasRequest?: () => void;
   autoFocus?: boolean;
   onReady?: () => void;
+  documentStyle?:Record<string,unknown>;
+  onWordCount?:(count:number)=>void;
   /** Writing help: the AI button over selected text. */
   aiEnabled?: boolean;
 }
@@ -64,7 +72,7 @@ interface Preview { target: string; left: number; top: number }
 interface Picker { x: number; y: number; from: number; query: string; sel: number }
 
 // Block editor (slash menu, drag handles, tables, code, images) with Obsidian-style [[links]].
-export function Editor({ path, initial, attachments, notes, onChange, onOpenLink, handleRef, onEquationRequest, onInsertRequest, autoFocus = false, onReady }: Props) {
+export function Editor({ path, initial, attachments, notes, onChange, onOpenLink, handleRef, onEquationRequest, onInsertRequest, autoFocus = false, onReady,documentStyle={},onWordCount }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const crepeRef = useRef<Crepe | null>(null);
   const equationCallback = useRef(onEquationRequest);
@@ -77,6 +85,7 @@ export function Editor({ path, initial, attachments, notes, onChange, onOpenLink
   const requestInsertRef = useRef<(kind: InsertKind, position?: number) => boolean>(() => false);
   const changeRef = useRef(onChange);
   changeRef.current = onChange;
+  const countRef=useRef(onWordCount);countRef.current=onWordCount;
   const [picker, setPicker] = useState<Picker | null>(null);
   const pickerRef = useRef<Picker | null>(null);
   pickerRef.current = picker;
@@ -143,7 +152,7 @@ export function Editor({ path, initial, attachments, notes, onChange, onOpenLink
       ctx.update(editorViewOptionsCtx, previous => ({...previous,handlePaste:(view,event,slice)=>
         pasteEquations(view,event,slice,markdown=>ctx.get(parserCtx)(markdown)) || previous.handlePaste?.(view,event,slice) || false}));
     })
-      .use(findHighlightsPlugin).use(calloutPlugin).use(footnotePlugin).use(inlineCanvasPlugin(() => ({notes: notesRef.current, openNote: (target, newTab) => onOpenLink(target, newTab)}))).use(embedPlugin).use(audioPlugin(() => attachmentsRef.current)).use(pdfPlugin(() => attachmentsRef.current));
+      .use(writingRemark).use(underlineMark).use(highlightMark).use(findHighlightsPlugin).use(calloutPlugin).use(footnotePlugin).use(inlineCanvasPlugin(() => ({notes: notesRef.current, openNote: (target, newTab) => onOpenLink(target, newTab)}))).use(embedPlugin).use(audioPlugin(() => attachmentsRef.current)).use(pdfPlugin(() => attachmentsRef.current));
     const mathLines = singleLineMath(initial);
     let alive = true;
     crepe.create().then(() => {
@@ -180,15 +189,16 @@ export function Editor({ path, initial, attachments, notes, onChange, onOpenLink
             const view = ctx.get(editorViewCtx), { $from } = view.state.selection;
             if ($from.parent.type.spec.code) return false;
             let changed = false;
-            if (action === 'bold') changed = callCommand(toggleStrongCommand.key)(ctx);
+            if(action==='undo'||action==='redo')changed=(action==='undo'?undo:redo)(view.state,view.dispatch);
+            else if(action==='underline'||action==='highlight')changed=toggleMark(view.state.schema.marks[action==='underline'?'cortex_underline':'cortex_highlight'])(view.state,view.dispatch);
+            else if(action==='strike')changed=callCommand(toggleStrikethroughCommand.key)(ctx);
+            else if(action==='numbered')changed=formatList(view,'numbered');
+            else if(action==='quote')changed=callCommand(wrapInBlockquoteCommand.key)(ctx);
+            else if (action === 'bold') changed = callCommand(toggleStrongCommand.key)(ctx);
             else if (action === 'italic') changed = callCommand(toggleEmphasisCommand.key)(ctx);
             else if (action === 'heading') changed = callCommand(wrapInHeadingCommand.key, $from.parent.type.name === 'heading' ? 0 : 2)(ctx);
             else if (action === 'paragraph' || action.startsWith('heading')) changed = callCommand(wrapInHeadingCommand.key, action === 'paragraph' ? 0 : Number(action.slice(-1)))(ctx);
-            else if (action === 'bullet') {
-              let inList = false;
-              for (let depth = $from.depth; depth > 0; depth--) if ($from.node(depth).type.name === 'bullet_list') inList = true;
-              changed = callCommand(inList ? liftListItemCommand.key : wrapInBulletListCommand.key)(ctx);
-            } else if (action === 'table') changed = callCommand(insertTableCommand.key, { row: 3, col: 3 })(ctx);
+            else if (action === 'bullet') {changed=formatList(view,'bullet');} else if (action === 'table') changed = callCommand(insertTableCommand.key, { row: 3, col: 3 })(ctx);
             if (changed) view.focus();
             return changed;
           }) ?? false : false,
@@ -219,11 +229,12 @@ export function Editor({ path, initial, attachments, notes, onChange, onOpenLink
         };
       }
       crepe.on(l => l.markdownUpdated((ctx) => {
-        if (alive && Date.now() > quiet.current) changeRef.current(noteMarkdown(ctx.get(editorViewCtx).state.doc,originalDoc,initial,ctx.get(serializerCtx),attachmentsRef.current,mathLines,originalMarkdown));
+        if (alive && Date.now() > quiet.current) {const md=noteMarkdown(ctx.get(editorViewCtx).state.doc,originalDoc,initial,ctx.get(serializerCtx),attachmentsRef.current,mathLines,originalMarkdown);changeRef.current(md);countRef.current?.(wordCount(md));}
       }));
       if (focusOnReady.current && !document.querySelector('[aria-modal="true"], .palette') && !document.activeElement?.closest('input, textarea, select')) {
         crepe.editor.action(ctx => ctx.get(editorViewCtx).focus());
       }
+      countRef.current?.(wordCount(initial));
       readyCallback.current?.();
     });
     return () => { alive = false; crepeRef.current = null; if (handleRef) handleRef.current = null; crepe.destroy(); };
@@ -272,6 +283,7 @@ export function Editor({ path, initial, attachments, notes, onChange, onOpenLink
 
   const onKeyDownCapture = (e: React.KeyboardEvent) => {
     if ((e.target as HTMLElement).closest('.inline-canvas')) return;
+    if((e.ctrlKey||e.metaKey)&&!e.altKey&&e.key.toLowerCase()==='u'){e.preventDefault();handleRef?.current?.format('underline');return;}
     if (isEquationShortcut(e.nativeEvent)) {
       const target = e.target as HTMLElement;
       const view = crepeRef.current?.editor.action(ctx => ctx.get(editorViewCtx));
@@ -346,8 +358,9 @@ export function Editor({ path, initial, attachments, notes, onChange, onOpenLink
     if (e.button === 1 && (e.target as HTMLElement).closest('a[href^="wiki:"]')) e.preventDefault();
   };
 
+  const style=pageStyle(documentStyle);
   return (
-    <div className="editor-host" onDoubleClickCapture={onDoubleClickCapture} onKeyUp={onKeyUp} onInput={onKeyUp} onKeyDownCapture={onKeyDownCapture} onClickCapture={onClickCapture} onAuxClick={onAuxClick} onMouseDownCapture={onMouseDownCapture} onMouseOver={onMouseOver} onMouseOut={onMouseOut} onKeyDown={() => hidePreview()}>
+    <div style={{fontFamily:PAGE_FONTS[style.font]||undefined,'--editor-font-size':style.size?`${style.size}px`:undefined} as React.CSSProperties} className="editor-host" onDoubleClickCapture={onDoubleClickCapture} onKeyUp={onKeyUp} onInput={onKeyUp} onKeyDownCapture={onKeyDownCapture} onClickCapture={onClickCapture} onAuxClick={onAuxClick} onMouseDownCapture={onMouseDownCapture} onMouseOver={onMouseOver} onMouseOut={onMouseOut} onKeyDown={() => hidePreview()}>
       <div ref={host} />
       {preview && (
         <div className="hover-preview" role="tooltip" aria-label="Note preview" style={{ left: preview.left, top: preview.top }}

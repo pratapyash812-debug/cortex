@@ -1366,6 +1366,32 @@ class Vault:
                 return {"primary": rel, "isNotebook": False, "sheets": [s for s in [self._sheet(rel)] if s]}
             return self._notebook_view(primary, data)
 
+    def create_section(self, rel: str, title: str) -> dict:
+        """A section is a durable empty notebook group inside an existing notebook."""
+        if not isinstance(title, str) or not title.strip():
+            raise ValueError("Give your section a name")
+        self.resolve(rel)
+        with self._note_save_lock, self._nb_lock:
+            data = self._read_notebooks()
+            if rel not in data and self.resolve(rel).is_dir():
+                # Explicit section creation can turn an old subject folder into
+                # a notebook. Keep every existing file and existing child group.
+                folder = rel
+                owned = {member for members in data.values() for member in members}
+                roots = [e.rel for e in self.entries() if e.path.parent == self.resolve(folder) and e.rel not in owned]
+                index = self.settled(self._write_new(folder, self.resolve(folder).name))
+                rel = self.rel(index)
+                data[rel] = roots
+            if rel not in data or not self._is_file(rel):
+                raise ValueError("Open an existing notebook before adding a section")
+            folder = rel[:-3] if rel.lower().endswith('.md') else rel
+            p = self.settled(self._write_new(folder, title.strip()))
+            created = self.rel(p)
+            data[rel] = [*data.get(rel, []), created]
+            data[created] = []
+            self._write_notebooks(data)
+            return {"created": created, **self._notebook_view(rel, data)}
+
     def add_sheet(self, rel: str, title: str | None = None) -> dict:
         """Add a sheet to the notebook `rel` is in, promoting a plain note the first time. Returns the new view."""
         self.resolve(rel)
@@ -1954,6 +1980,9 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/notebook/create" and method == "POST":
                 b = self.body_json()
                 return self.done(v.create_notebook(b.get("title")))
+            if path == "/api/notebook/section" and method == "POST":
+                b = self.body_json()
+                return self.done(v.create_section(b.get("path", ""), b.get("title")))
             if path == "/api/notebook":
                 if method == "GET":
                     return self.send_json(v.notebook(q["path"]))
@@ -2051,6 +2080,9 @@ class Handler(SimpleHTTPRequestHandler):
                 data = publish.export_note_html(v, q["path"], print_dialog=q.get("print") == "1").encode()
                 name = None if q.get("inline") == "1" else Path(q["path"]).stem + ".html"
                 return self.send_download(data, "text/html; charset=utf-8", name)
+            if path == "/api/export/docx" and method == "GET":
+                from docx_export import export_note
+                return self.send_download(export_note(v, q["path"]), "application/vnd.openxmlformats-officedocument.wordprocessingml.document", Path(q["path"]).stem + ".docx")
             if path == "/api/embed" and method == "GET":
                 return self.send_json(v.embed(q["target"]))
             if path == "/api/templates" and method == "GET":

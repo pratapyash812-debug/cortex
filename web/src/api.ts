@@ -259,6 +259,7 @@ export const api = {
   tree: () => call<{ notes: NoteInfo[]; canvases: CanvasInfo[]; folders: string[]; vault: string; notebooks: Record<string, string[]> }>('GET', '/api/tree'),
   notebook: (path: string) => call<NotebookView>('GET', `/api/notebook?path=${enc(path)}`),
   createNotebook: (title: string) => call<Note>('POST', '/api/notebook/create', { title }),
+  createSection: (path: string, title: string) => call<NotebookView & {created:string}>('POST','/api/notebook/section',{path,title}),
   addSheet: (path: string, title?: string) => call<NotebookView & { created: string }>('POST', '/api/notebook', { path, ...(title ? { title } : {}) }),
   reorderSheets: (primary: string, order: string[]) => call<NotebookView>('POST', '/api/notebook/reorder', { primary, order }),
   removeSheet: (path: string) => call<NotebookView>('DELETE', `/api/notebook/sheet?path=${enc(path)}`),
