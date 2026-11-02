@@ -1,5 +1,8 @@
 .equation-composer { display: grid; gap: 14px; min-width: 0; color: var(--fg); }
 .equation-intro { margin: 0; max-width: 64ch; color: var(--muted); font-size: 13px; line-height: 1.55; }
+.equation-solve, .equation-answer { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; min-width: 0; }
+.equation-answer { padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+.equation-answer-value { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--fg); font: 20px/1.4 Georgia, serif; }
 .equation-structures { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; padding: 5px; border: 1px solid var(--line); border-radius: 16px; background: var(--list); }
 .equation-structures button { display: grid; justify-items: center; align-content: center; gap: 2px; min-height: 64px; padding: 6px; border: 0; border-radius: 11px; background: transparent; color: var(--fg); font: inherit; font-size: 11px; }
 .equation-glyph { font: 24px/1.15 Georgia, serif; }

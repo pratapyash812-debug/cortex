@@ -51,6 +51,12 @@ function fixture(t, options = {}) {
     if (id === 'react/jsx-runtime') return { jsx: (type, props, key) => ({ type, props, key }), jsxs: (type, props, key) => ({ type, props, key }) };
     if (id === './Modal') return { Modal: 'Modal' };
     if (id === '../useCloseRisk') return { useCloseRisk(getter) { risk = getter; } };
+    if (id === '../equationSolve') {
+      const file = path.resolve(path.dirname(source), '../equationSolve.ts');
+      const solver = new Module(file, module);
+      solver._compile(ts.transpileModule(fs.readFileSync(file, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, file);
+      return solver.exports;
+    }
     if (id.endsWith('.css')) return {};
     if (id === 'mathlive') { imports++; if (options.importFails) throw Error('Module unavailable'); return { MathfieldElement: Field, initVirtualKeyboardInCurrentBrowsingContext() { mounts++; } }; }
     return Module.prototype.require.call(loaded, id);
@@ -81,6 +87,29 @@ function textarea(tree) { const found = nodes(tree, node => node.type === 'texta
 function alertText(tree) { return nodes(tree, node => node.props?.role === 'alert').map(text).join(' '); }
 async function flush() { for (let at = 0; at < 8; at++) await Promise.resolve(); }
 function deferred() { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
+
+test('auto-solve previews the answer and keeps the draft unchanged until requested', async t => {
+  const ui = fixture(t, { initialLatex: '(5\\cdot4\\cdot3\\cdot2\\cdot1)(2\\cdot1)' }); await ui.ready();
+  ui.click('Auto-solve'); assert.match(text(ui.render()), /Answer240/);
+  assert.equal(ui.risk, false); assert.equal(ui.calls.length, 0);
+  ui.click('Add answer'); assert.equal(textarea(ui.render()).props.value, '(5\\cdot4\\cdot3\\cdot2\\cdot1)(2\\cdot1)=240');
+  assert.equal(ui.risk, true);
+  ui.click('Insert equation'); await flush();
+  assert.deepEqual(ui.calls, [['(5\\cdot4\\cdot3\\cdot2\\cdot1)(2\\cdot1)=240', false]]);
+});
+
+test('edits invalidate answers and solving errors never change or insert an equation', async t => {
+  const ui = fixture(t, { initialLatex: '2+3' }); await ui.ready();
+  ui.click('Auto-solve'); const staleAdd = button(ui.render(), 'Add answer');
+  ui.fields[0].edit('10/0'); staleAdd.props.onClick();
+  assert.equal(textarea(ui.render()).props.value, '10/0');
+  ui.click('Auto-solve'); assert.match(alertText(ui.render()), /Division by zero/);
+  assert.equal(ui.calls.length, 0);
+  ui.source('2+8'); ui.click('Auto-solve'); assert.match(text(ui.render()), /Answer10/);
+  ui.source('2+9'); assert.equal(nodes(ui.render(), n => n.props?.className === 'equation-answer').length, 0);
+  ui.fields[0].edit('2+10'); ui.click('Auto-solve');
+  ui.click('Undo'); assert.equal(nodes(ui.render(), n => n.props?.className === 'equation-answer').length, 0);
+});
 
 test('visual editor configures same-origin assets and restores the in-modal keyboard on unmount', async t => {
   const ui = fixture(t, { initialLatex: 'x + 1', canonical: value => value.replaceAll(' ', '') });

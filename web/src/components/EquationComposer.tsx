@@ -3,6 +3,7 @@ import type { MathfieldElement, VirtualKeyboardInterface } from 'mathlive';
 import katex from 'katex';
 import { Modal } from './Modal';
 import { useCloseRisk } from '../useCloseRisk';
+import { solveEquation, type EquationAnswer } from '../equationSolve';
 import './EquationComposer.css';
 
 export interface EquationComposerProps {
@@ -49,6 +50,7 @@ export function EquationComposer({ initialLatex, initialDisplay, onApply, onClos
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [loadKey, setLoadKey] = useState(0);
+  const [answer, setAnswer] = useState<EquationAnswer | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const keyboardHostRef = useRef<HTMLDivElement>(null);
   const fieldRef = useRef<MathfieldElement | null>(null);
@@ -142,6 +144,7 @@ export function EquationComposer({ initialLatex, initialDisplay, onApply, onClos
           sourceLast.current = false;
           latexRef.current = field.getValue('latex');
           setLatex(latexRef.current);
+          setAnswer(null);
           setError('');
         } catch { setError('The equation could not be read. Your draft is still open.'); }
       };
@@ -183,6 +186,7 @@ export function EquationComposer({ initialLatex, initialDisplay, onApply, onClos
     field.insert(value, { format: 'latex', selectionMode: 'placeholder', focus: true, feedback: false });
     latexRef.current = field.getValue('latex');
     setLatex(latexRef.current);
+    setAnswer(null);
     setError('');
   };
   const command = (value: 'undo' | 'redo') => {
@@ -192,7 +196,26 @@ export function EquationComposer({ initialLatex, initialDisplay, onApply, onClos
     field.executeCommand(value);
     latexRef.current = field.getValue('latex');
     setLatex(latexRef.current);
+    setAnswer(null);
     field.focus();
+  };
+  const solve = () => {
+    if (applying.current) return;
+    setError(''); setAnswer(null);
+    try { setAnswer(solveEquation(readDraft())); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'This calculation could not be solved. Your equation is unchanged.'); }
+  };
+  const addAnswer = () => {
+    if (!answer || applying.current) return;
+    // Never attach a result to a different draft, including last-moment visual edits.
+    try {
+      if (solveEquation(readDraft()).completed !== answer.completed) { setAnswer(null); return; }
+      sourceLast.current = true;
+      latexRef.current = answer.completed;
+      fieldRef.current?.setValue(answer.completed, { silenceNotifications: true });
+      setLatex(answer.completed); setAnswer(null); setError('');
+      fieldRef.current?.focus();
+    } catch { setAnswer(null); }
   };
   const apply = async () => {
     if (applying.current) return;
@@ -245,6 +268,15 @@ export function EquationComposer({ initialLatex, initialDisplay, onApply, onClos
           </button>)}
         </div>
         <div className="equation-visual" ref={hostRef} />
+        <div className="equation-solve">
+          <button type="button" className="btn ghost small" disabled={busy || !latex.trim()} onClick={solve}>Auto-solve</button>
+          <span className="muted small">Numerical calculations · angles in radians</span>
+        </div>
+        {answer && <div className="equation-answer" role="status" aria-live="polite">
+          <span className="muted small">{answer.approximate ? 'Approximate answer' : 'Answer'}</span>
+          <span className="equation-answer-value">{answer.approximate ? '≈ ' : ''}{answer.text}</span>
+          <button type="button" className="btn ghost small" disabled={busy} onClick={addAnswer}>Add answer</button>
+        </div>}
         {!ready && !loadError && <p className="muted small" role="status">Loading equation tools…</p>}
         {loadError && <div className="equation-message" role="alert"><span>The visual editor could not load. Your source is preserved.</span><button type="button" className="btn ghost small" disabled={busy} onClick={() => setLoadKey(value => value + 1)}>Try again</button><details><summary>Details</summary><pre>{loadError}</pre></details></div>}
         <div className="equation-secondary">
@@ -276,6 +308,7 @@ export function EquationComposer({ initialLatex, initialDisplay, onApply, onClos
             sourceLast.current = true;
             latexRef.current = event.target.value;
             setLatex(event.target.value);
+            setAnswer(null);
             setError('');
             fieldRef.current?.setValue(event.target.value, { silenceNotifications: true });
           }} /></label>

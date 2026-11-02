@@ -1,7 +1,7 @@
 {
-  "version": "1.2.4",
+  "version": "1.2.5",
   "architecture": "arm64",
   "minimumMacOS": "13.0",
-  "sourceRelease": "1.2.4-minimal",
+  "sourceRelease": "1.2.5-autosolve",
   "personalDataIncluded": false
 }
