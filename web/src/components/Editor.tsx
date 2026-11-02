@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Crepe } from '@milkdown/crepe';
-import { editorViewCtx, parserCtx, serializerCtx, remarkStringifyOptionsCtx } from '@milkdown/kit/core';
+import { editorViewCtx, editorViewOptionsCtx, parserCtx, serializerCtx, remarkStringifyOptionsCtx } from '@milkdown/kit/core';
 import { callCommand, insert, replaceAll } from '@milkdown/kit/utils';
 import { toggleStrongCommand, toggleEmphasisCommand, wrapInHeadingCommand, wrapInBulletListCommand, liftListItemCommand } from '@milkdown/kit/preset/commonmark';
 import { insertTableCommand } from '@milkdown/kit/preset/gfm';
@@ -10,6 +10,7 @@ import '@milkdown/crepe/theme/frame.css';
 import { api, type NoteInfo } from '../api';
 import { inlineCanvasPlugin } from '../inlineCanvas';
 import {noteMarkdown} from '../noteMarkdown';
+import {pasteEquations} from '../mathPastePlugin';
 import { createInsertRequest, figureId, type InsertRequest, type InsertKind } from '../insert';
 export type { InsertRequest, InsertKind } from '../insert';
 import { toEditor, fromEditor, wikiTarget, singleLineMath } from '../wikilinks';
@@ -137,7 +138,11 @@ export function Editor({ path, initial, attachments, notes, onChange, onOpenLink
       },
     });
     // Bullets are written as "- " and rules as "---" like Obsidian does, not the serializer's default "* " and "***".
-    crepe.editor.config(ctx => ctx.update(remarkStringifyOptionsCtx, o => ({ ...o, bullet: '-' as const, rule: '-' as const })))
+    crepe.editor.config(ctx => {
+      ctx.update(remarkStringifyOptionsCtx, o => ({ ...o, bullet: '-' as const, rule: '-' as const }));
+      ctx.update(editorViewOptionsCtx, previous => ({...previous,handlePaste:(view,event,slice)=>
+        pasteEquations(view,event,slice,markdown=>ctx.get(parserCtx)(markdown)) || previous.handlePaste?.(view,event,slice) || false}));
+    })
       .use(findHighlightsPlugin).use(calloutPlugin).use(footnotePlugin).use(inlineCanvasPlugin(() => ({notes: notesRef.current, openNote: (target, newTab) => onOpenLink(target, newTab)}))).use(embedPlugin).use(audioPlugin(() => attachmentsRef.current)).use(pdfPlugin(() => attachmentsRef.current));
     const mathLines = singleLineMath(initial);
     let alive = true;

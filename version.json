@@ -1,7 +1,7 @@
 {
-  "version": "1.2.5",
+  "version": "1.2.6",
   "architecture": "arm64",
   "minimumMacOS": "13.0",
-  "sourceRelease": "1.2.5-autosolve",
+  "sourceRelease": "1.2.6-algebra-paste",
   "personalDataIncluded": false
 }

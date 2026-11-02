@@ -111,6 +111,14 @@ test('edits invalidate answers and solving errors never change or insert an equa
   ui.click('Undo'); assert.equal(nodes(ui.render(), n => n.props?.className === 'equation-answer').length, 0);
 });
 
+test('algebra previews teaching steps and adds working as display maths without replacing the saved note early',async t=>{
+  const ui=fixture(t,{initialLatex:'2x+3=11'});await ui.ready();ui.click('Auto-solve');
+  assert.match(text(ui.render()),/x = 4/);assert.match(text(ui.render()),/Add 8/);assert.match(text(ui.render()),/Divide both sides by 2/);
+  assert.equal(ui.calls.length,0);ui.click('Add working');const value=textarea(ui.render()).props.value;
+  assert.match(value,/\\begin\{aligned\}/);assert.match(value,/2x\+3=11/);assert.match(value,/x=4/);
+  ui.click('Insert equation');await flush();assert.deepEqual(ui.calls,[[value,true]]);
+});
+
 test('visual editor configures same-origin assets and restores the in-modal keyboard on unmount', async t => {
   const ui = fixture(t, { initialLatex: 'x + 1', canonical: value => value.replaceAll(' ', '') });
   const tree = await ui.ready(); const field = ui.fields[0];

@@ -205,15 +205,17 @@ export function EquationComposer({ initialLatex, initialDisplay, onApply, onClos
     try { setAnswer(solveEquation(readDraft())); }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'This calculation could not be solved. Your equation is unchanged.'); }
   };
-  const addAnswer = () => {
+  const addAnswer = (withWorking=false) => {
     if (!answer || applying.current) return;
     // Never attach a result to a different draft, including last-moment visual edits.
     try {
       if (solveEquation(readDraft()).completed !== answer.completed) { setAnswer(null); return; }
       sourceLast.current = true;
-      latexRef.current = answer.completed;
-      fieldRef.current?.setValue(answer.completed, { silenceNotifications: true });
-      setLatex(answer.completed); setAnswer(null); setError('');
+      const value=withWorking&&answer.working?answer.working:answer.completed;
+      latexRef.current = value;
+      fieldRef.current?.setValue(value, { silenceNotifications: true });
+      if(withWorking){displayRef.current=true;setDisplay(true);}
+      setLatex(value); setAnswer(null); setError('');
       fieldRef.current?.focus();
     } catch { setAnswer(null); }
   };
@@ -270,13 +272,16 @@ export function EquationComposer({ initialLatex, initialDisplay, onApply, onClos
         <div className="equation-visual" ref={hostRef} />
         <div className="equation-solve">
           <button type="button" className="btn ghost small" disabled={busy || !latex.trim()} onClick={solve}>Auto-solve</button>
-          <span className="muted small">Numerical calculations · angles in radians</span>
+          <span className="muted small">Calculations & equations in x · angles in radians</span>
         </div>
         {answer && <div className="equation-answer" role="status" aria-live="polite">
           <span className="muted small">{answer.approximate ? 'Approximate answer' : 'Answer'}</span>
-          <span className="equation-answer-value">{answer.approximate ? '≈ ' : ''}{answer.text}</span>
-          <button type="button" className="btn ghost small" disabled={busy} onClick={addAnswer}>Add answer</button>
+          <span className="equation-answer-value">{answer.approximate&&!answer.steps ? '≈ ' : ''}{answer.text}</span>
+          <button type="button" className="btn ghost small" disabled={busy} onClick={()=>addAnswer()}>Add answer</button>
         </div>}
+        {!!answer?.steps?.length&&<details className="equation-steps"><summary>Show steps</summary><ol>
+          {answer.steps.map((step,index)=><li key={index}><p>{step.title}</p><div className="equation-step-math" dangerouslySetInnerHTML={{__html:katex.renderToString(step.latex,{displayMode:true,throwOnError:true,strict:false,trust:false})}}/></li>)}
+        </ol><button type="button" className="btn ghost small" disabled={busy} onClick={()=>addAnswer(true)}>Add working</button></details>}
         {!ready && !loadError && <p className="muted small" role="status">Loading equation tools…</p>}
         {loadError && <div className="equation-message" role="alert"><span>The visual editor could not load. Your source is preserved.</span><button type="button" className="btn ghost small" disabled={busy} onClick={() => setLoadKey(value => value + 1)}>Try again</button><details><summary>Details</summary><pre>{loadError}</pre></details></div>}
         <div className="equation-secondary">
