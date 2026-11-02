@@ -33,6 +33,13 @@ class WordNotebookTests(unittest.TestCase):
         result=self.v.create_section('School','New topic');data=self.v.tree()['notebooks']
         self.assertIn(n['path'],data['School/School.md']);self.assertIn(result['created'],data['School/School.md'])
         self.assertEqual(self.v.resolve(n['path']).read_bytes(),before)
+    def test_move_page_changes_only_membership_and_rejects_cycles(self):
+        book=self.v.create_notebook('Study')['path'];one=self.v.create_section(book,'One')['created'];two=self.v.create_section(book,'Two')['created'];page=self.v.add_sheet(one,'Page')['created']
+        before=self.v.resolve(page).read_bytes();self.v.move_page(page,two)
+        self.assertEqual(self.v.notebook(page)['primary'],two);self.assertEqual(self.v.resolve(page).read_bytes(),before)
+        child=self.v.create_section(one,'Child')['created']
+        with self.assertRaises(ValueError):self.v.move_page(one,child)
+        with self.assertRaises(ValueError):self.v.move_page(book,two)
     def test_structural_equations_roundtrip_or_fail_with_original_source(self):
         for source in [r'x=\frac{1}{2}',r'\sqrt[3]{8}',r'x_1^2',r'\binom{8}{2}',r'{8\choose 2}',r'\begin{aligned}&2x+3=11\\&\text{Divide both sides by 2.}\\&x=4\end{aligned}']:
             result=omml.convert(equation(source));self.assertIsNotNone(result.latex,source)

@@ -1425,6 +1425,28 @@ class Vault:
             self._write_notebooks(data)
             return self._notebook_view(real, data)
 
+    def move_page(self, rel: str, target: str) -> dict:
+        """Change notebook ownership only; keep the original note and attachments in place."""
+        self.resolve(rel); self.resolve(target)
+        with self._note_save_lock, self._nb_lock:
+            data = self._read_notebooks()
+            if not self._is_file(rel) or target not in data or not self._is_file(target):
+                raise ValueError('Choose an existing page and destination notebook or section')
+            if rel in data and not any(rel in members for members in data.values()):
+                raise ValueError('A whole notebook cannot be moved inside another notebook')
+            pending = [rel]; descendants = set()
+            while pending:
+                item = pending.pop()
+                if item in descendants: continue
+                descendants.add(item); pending.extend(data.get(item, []))
+            if target in descendants: raise ValueError('A section cannot be moved inside itself')
+            if [p for p, members in data.items() if rel in members] == [target]:
+                return self._notebook_view(target, data)
+            for primary, members in data.items(): data[primary] = [p for p in members if p != rel]
+            data[target] = [*data[target], rel]
+            self._write_notebooks(data)
+            return self._notebook_view(target, data)
+
     def remove_sheet(self, sheet: str) -> dict:
         """Trash one extra sheet and drop it from its notebook. The primary note is never removed this way."""
         data = self._read_notebooks()
@@ -1983,6 +2005,9 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/notebook/section" and method == "POST":
                 b = self.body_json()
                 return self.done(v.create_section(b.get("path", ""), b.get("title")))
+            if path == "/api/notebook/move" and method == "POST":
+                b = self.body_json()
+                return self.done(v.move_page(b.get("path", ""), b.get("target", "")))
             if path == "/api/notebook":
                 if method == "GET":
                     return self.send_json(v.notebook(q["path"]))
