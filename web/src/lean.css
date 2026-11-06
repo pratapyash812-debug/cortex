@@ -67,11 +67,34 @@ html,body,#root{overflow:hidden}.lean-app{height:100%}
 .contents-total{font-size:12px;font-weight:400;color:var(--muted);margin-left:10px;white-space:nowrap}
 .contents-empty{padding:18px 0}.contents-empty p{margin-top:0}
 .document-kind{max-width:var(--page-width);margin:20px auto -12px;padding:0 28px;color:var(--muted);font-size:11px;letter-spacing:.07em;text-transform:uppercase}
-.writing-format{display:flex;align-items:center;gap:3px;flex-wrap:wrap}.writing-format select{max-width:135px}
+.writing-format{display:flex;align-items:center;gap:2px;padding-inline-end:6px;border-inline-end:1px solid var(--line)}
+.writing-format select{max-width:120px;min-height:29px;font-size:12px}
+.document-toolbar .writing-format .icon{min-width:28px;min-height:29px}
 .document-status{max-width:var(--page-width);margin:16px auto 28px;padding:8px 28px;color:var(--muted);font-size:11px;border-top:1px solid var(--line)}
 .page-appearance label{display:grid;gap:5px;font-size:12px;padding:8px 12px}.page-appearance select{color:var(--fg);background:var(--bg);border:1px solid var(--line);padding:6px;min-width:145px}.page-appearance p{padding:0 12px;max-width:190px}
 .editor-host .milkdown{font-family:inherit;--crepe-font-default:inherit;--crepe-font-title:inherit}
 .editor-host .ProseMirror mark{background:#ffe08a;color:#29220e;border-radius:2px;padding:0 1px}.editor-host .ProseMirror u{text-underline-offset:3px}
+.editor-host {
+  --writing-red:#a52332;--writing-green:#216738;--writing-blue:#245ab3;
+  --writing-purple:#683ba4;--writing-orange:#934314;
+}
+[data-theme=dark] .editor-host {
+  --writing-red:#ff929b;--writing-green:#83d79a;--writing-blue:#96bfff;
+  --writing-purple:#c5a6ff;--writing-orange:#ffb079;
+}
+[data-theme=dark] .editor-host .ProseMirror mark {
+  --writing-red:#a52332;--writing-green:#216738;--writing-blue:#245ab3;
+  --writing-purple:#683ba4;--writing-orange:#934314;
+}
+.editor-host .ProseMirror [data-cortex-align=center]{text-align:center}
+.editor-host .ProseMirror [data-cortex-align=right]{text-align:right}
+.editor-host .ProseMirror [data-cortex-align=justify]{text-align:justify}
+.editor-host .ProseMirror [data-cortex-indent="1"]{padding-inline-start:1.5em}
+.editor-host .ProseMirror [data-cortex-indent="2"]{padding-inline-start:3em}
+.editor-host .ProseMirror [data-cortex-indent="3"]{padding-inline-start:4.5em}
+.editor-host .ProseMirror [data-cortex-indent="4"]{padding-inline-start:6em}
+.editor-host .ProseMirror .list-item .label-wrapper .label{color:var(--muted)}
+.editor-host .ProseMirror .list-item .label-wrapper .label svg{fill:currentColor}
 .outline-note>svg{flex-shrink:0;color:var(--muted)}
 
 /* Subjects → pages → one document, matching the notebook's everyday reading order. */

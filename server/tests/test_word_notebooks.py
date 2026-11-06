@@ -63,4 +63,25 @@ class WordNotebookTests(unittest.TestCase):
         n=self.v.create('','Style','Text');self.v.set_meta(n['path'],'documentStyle',{'font':'serif','size':20})
         html=__import__('publish').export_note_html(self.v,n['path']);self.assertIn('Georgia,serif',html);self.assertIn('font-size:20px',html)
 
+    def test_toolbar_formatting_exports_as_editable_word_properties(self):
+        note = self.v.create('', 'Formatting', '\n\n'.join([
+            '## Title<!--cortex-layout:center,0-->',
+            '<span data-cortex-text="serif,18,blue">**Key text**</span><!--cortex-layout:justify,2-->',
+            '- [x] Finished<!--cortex-layout:right,0-->',
+        ]))
+        html = __import__('publish').export_note_html(self.v, note['path'])
+        self.assertIn('data-cortex-align="center"', html)
+        self.assertIn('font-size:18pt', html)
+        self.assertNotIn('<!--cortex-layout:', html)
+        with zipfile.ZipFile(io.BytesIO(docx_export.export_note(self.v, note['path']))) as package:
+            document = E.fromstring(package.read('word/document.xml'))
+        ns = docx_export.NS
+        val = '{' + ns['w'] + '}val'
+        self.assertEqual([e.attrib[val] for e in document.findall('.//w:jc', ns)], ['center', 'both', 'right'])
+        self.assertEqual(document.find('.//w:ind', ns).attrib['{' + ns['w'] + '}left'], '720')
+        self.assertEqual(document.find('.//w:rFonts', ns).attrib['{' + ns['w'] + '}ascii'], 'Georgia')
+        self.assertIn('36', [e.attrib[val] for e in document.findall('.//w:sz', ns)])
+        self.assertEqual(document.find('.//w:color', ns).attrib[val], '245AB3')
+        self.assertIn('☑ ', [e.text for e in document.findall('.//w:t', ns)])
+
 if __name__=='__main__':unittest.main()

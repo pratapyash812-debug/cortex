@@ -12,7 +12,11 @@ def node(tag,*children,**attrs):
     prefix,name=tag.split(':');e=E.Element('{%s}%s'%(NS[prefix],name),{'{%s}%s'%(NS[prefix],k):str(v) for k,v in attrs.items()});e.extend(children);return e
 def text_run(text,marks=()):
     t=node('w:t');t.text=re.sub('[\x00-\x08\x0b\x0c\x0e-\x1f]','',text);t.set('{http://www.w3.org/XML/1998/namespace}space','preserve')
-    return node('w:r',*([node('w:rPr',*[node('w:'+m,val=v) for m,v in marks])] if marks else []),t)
+    properties = [
+        node('w:rFonts', ascii=value, hAnsi=value) if name == 'rFonts' else node('w:' + name, val=value)
+        for name, value in marks
+    ]
+    return node('w:r', *([node('w:rPr', *properties)] if properties else []), t)
 def xml(n):return E.tostring(n,encoding='utf-8',xml_declaration=True)
 def fallback_png():
     def chunk(tag,data):return struct.pack('>I',len(data))+tag+data+struct.pack('>I',zlib.crc32(tag+data))
@@ -49,6 +53,17 @@ class Word:
                 return [text_run('[Equation source: '+source+']',marks)]
         extra={'strong':('b','1'),'b':('b','1'),'em':('i','1'),'i':('i','1'),'u':('u','single'),'del':('strike','1'),'s':('strike','1'),'mark':('highlight','yellow'),'code':('rFonts','Consolas')}.get(n.tag)
         if extra and n.tag!='code':marks=(*marks,extra)
+        if n.tag == 'span':
+            style = re.fullmatch(r'([a-z]+),(\d{1,2}),([a-z]+)', n.attrs.get('data-cortex-text', ''))
+            if style:
+                font, size, colour = style.groups()
+                fonts = {'sans': 'Segoe UI', 'serif': 'Georgia', 'mono': 'Consolas'}
+                if font in fonts:
+                    marks = (*marks, ('rFonts', fonts[font]))
+                if int(size) in publish.TEXT_SIZES:
+                    marks = (*marks, ('sz', int(size) * 2))
+                if colour in publish.TEXT_COLOURS:
+                    marks = (*marks, ('color', publish.TEXT_COLOURS[colour].upper()))
         if n.tag=='br':return [node('w:r',node('w:br'))]
         if n.tag=='input' and n.attrs.get('type')=='checkbox':return [text_run('☑ ' if 'checked' in n.attrs else '☐ ',marks)]
         if n.tag=='img':return self.image(n)
@@ -57,10 +72,17 @@ class Word:
         if n.tag=='a' and re.match(r'^(https?://|mailto:)',href):
             h=E.Element('{%s}hyperlink'%W,{'{%s}id'%R:self.rel('hyperlink',href,True)});h.extend(children);return [h]
         return children
-    def para(self,children,style=None,list_kind=None,level=0):
+    def para(self,children,style=None,list_kind=None,level=0,layout=None):
         p=node('w:p');props=node('w:pPr')
         if style:props.append(node('w:pStyle',val=style))
         if list_kind:props.append(node('w:numPr',node('w:ilvl',val=min(level,8)),node('w:numId',val=1 if list_kind=='ol' else 2)))
+        if layout:
+            indent = layout.get('data-cortex-indent', '')
+            align = layout.get('data-cortex-align', '')
+            if indent in ('1', '2', '3', '4'):
+                props.append(node('w:ind', left=int(indent) * 360))
+            if align in ('left', 'center', 'right', 'justify'):
+                props.append(node('w:jc', val='both' if align == 'justify' else align))
         p.append(props)
         for c in children:p.extend(self.inline(c))
         return p
@@ -88,12 +110,16 @@ class Word:
                 if not isinstance(li,Html) or li.tag!='li':continue
                 inline=[c for c in li.children if isinstance(c,str) or c.tag not in ('ul','ol','p')]
                 paragraphs=[c for c in li.children if isinstance(c,Html) and c.tag=='p']
-                out.append(self.para(paragraphs[0].children if paragraphs else inline,list_kind=n.tag,level=level))
-                for c in paragraphs[1:]:out.append(self.para(c.children))
+                if paragraphs:
+                    checkbox = [c for c in inline if isinstance(c, Html) and c.tag == 'input']
+                    out.append(self.para(checkbox + paragraphs[0].children, list_kind=n.tag, level=level, layout=paragraphs[0].attrs))
+                else:
+                    out.append(self.para(inline, list_kind=n.tag, level=level))
+                for c in paragraphs[1:]:out.append(self.para(c.children, layout=c.attrs))
                 for c in li.children:
                     if isinstance(c,Html) and c.tag in ('ul','ol'):out.extend(self.blocks(c,level+1))
             return out
-        if n.tag in ('p','h1','h2','h3','h4','h5','h6','pre') or n.attrs.get('class')=='math':return [self.para([n],('Heading'+n.tag[1]) if re.fullmatch('h[1-6]',n.tag) else None)]
+        if n.tag in ('p','h1','h2','h3','h4','h5','h6','pre') or n.attrs.get('class')=='math':return [self.para([n],('Heading'+n.tag[1]) if re.fullmatch('h[1-6]',n.tag) else None, layout=n.attrs)]
         if n.tag=='img':return [self.para([n])]
         if n.tag in ('script','style'):return []
         out=[];pending=[]

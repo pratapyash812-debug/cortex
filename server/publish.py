@@ -173,6 +173,25 @@ class ExportContext:
         return self.vault.root / hit if hit else None
 
 
+TEXT_FONTS = {
+    "sans": '"Segoe UI", Arial, sans-serif',
+    "serif": 'Georgia, "Times New Roman", serif',
+    "mono": 'Consolas, "Courier New", monospace',
+}
+TEXT_SIZES = {8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 72}
+TEXT_COLOURS = {"red": "a52332", "green": "216738", "blue": "245ab3", "purple": "683ba4", "orange": "934314"}
+TEXT_RUN = re.compile(r'<span data-cortex-text="([a-z]+),(\d{1,2}),([a-z]+)">(.*?)</span>', re.DOTALL)
+PARAGRAPH_LAYOUT = re.compile(r"<!--cortex-layout:(left|center|right|justify),([0-4])-->\s*$")
+
+
+def layout_attributes(text: str) -> tuple[str, str]:
+    match = PARAGRAPH_LAYOUT.search(text)
+    if not match:
+        return text, ""
+    align, indent = match.groups()
+    return text[:match.start()], f' data-cortex-align="{align}" data-cortex-indent="{indent}"'
+
+
 class Renderer:
     def __init__(self, ctx: ExportContext, depth: int = 0, seen: frozenset = frozenset()):
         self.ctx, self.depth, self.seen = ctx, depth, seen
@@ -233,6 +252,25 @@ class Renderer:
         text = CODE_SPAN.sub(lambda m: self._hold(f"<code>{esc(m.group(2).strip())}</code>"), text)
         text = MATH.sub(lambda m: self._hold(f'<span class="math">{esc(m.group(0))}</span>'), text)
         text = re.sub(r'<u>(.+?)</u>', lambda m: self._hold('<u>' + self.inline(m.group(1)) + '</u>'), text)
+
+        def styled_text(match: re.Match) -> str:
+            font, size, colour, body = match.groups()
+            font = font if font in TEXT_FONTS else "default"
+            size = int(size) if int(size) in TEXT_SIZES else 0
+            colour = colour if colour in TEXT_COLOURS else "default"
+            style = []
+            if font != "default":
+                style.append(f"font-family:{TEXT_FONTS[font]}")
+            if size:
+                style.append(f"font-size:{size}pt")
+            if colour != "default":
+                style.append(f"color:var(--writing-{colour},#{TEXT_COLOURS[colour]})")
+            return self._hold(
+                f'<span data-cortex-text="{font},{size},{colour}" style="{esc(";".join(style))}">'
+                + self.inline(body) + '</span>'
+            )
+
+        text = TEXT_RUN.sub(styled_text, text)
 
         def wiki(m: re.Match) -> str:
             bang, raw = m.groups()
@@ -339,7 +377,8 @@ class Renderer:
             m = HEADING.match(line)
             if m:
                 lvl, text = len(m.group(1)), m.group(2)
-                out.append(f'<h{lvl} id="{esc(self.heading_id(text))}">{self.inline(text)}</h{lvl}>')
+                text, attrs = layout_attributes(text)
+                out.append(f'<h{lvl} id="{esc(self.heading_id(text))}"{attrs}>{self.inline(text)}</h{lvl}>')
                 i += 1
                 continue
             if HR.match(line):
@@ -391,7 +430,8 @@ class Renderer:
                                                       or lines[i].lstrip().startswith(">") or LIST_ITEM.match(lines[i])):
                 para.append(lines[i])
                 i += 1
-            out.append("<p>" + self.inline("\n".join(p.rstrip() for p in para)) + "</p>")
+            text, attrs = layout_attributes("\n".join(p.rstrip() for p in para))
+            out.append(f"<p{attrs}>" + self.inline(text) + "</p>")
         return "\n".join(out)
 
     def quote(self, lines: list[str]) -> str:
@@ -475,6 +515,11 @@ code{font:.9em ui-monospace,Consolas,monospace;background:var(--soft);padding:.1
 blockquote{margin:1em 0;padding:.1em 1em;border-left:3px solid var(--line);color:var(--muted)}
 table{border-collapse:collapse;margin:1em 0;display:block;overflow:auto}th,td{border:1px solid var(--table-line);padding:.35rem .7rem}th{background:var(--soft)}
 hr{border:0;border-top:1px solid var(--line);margin:2em 0}mark{background:var(--mark);color:inherit}
+[data-cortex-align=center]{text-align:center}[data-cortex-align=right]{text-align:right}[data-cortex-align=justify]{text-align:justify}
+[data-cortex-indent="1"]{padding-inline-start:1.5em}[data-cortex-indent="2"]{padding-inline-start:3em}
+[data-cortex-indent="3"]{padding-inline-start:4.5em}[data-cortex-indent="4"]{padding-inline-start:6em}
+:root[data-theme=dark]{--writing-red:#ff929b;--writing-green:#83d79a;--writing-blue:#96bfff;--writing-purple:#c5a6ff;--writing-orange:#ffb079}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]){--writing-red:#ff929b;--writing-green:#83d79a;--writing-blue:#96bfff;--writing-purple:#c5a6ff;--writing-orange:#ffb079}}
 ul,ol{padding-left:1.5rem}li.task{list-style:none;margin-left:-1.4rem}li.task.done{color:var(--muted);text-decoration:line-through}
 .math{font-family:Cambria,"Times New Roman",serif;font-style:italic}div.math{text-align:center;margin:1em 0}
 .callout{margin:1em 0;padding:.6rem 1rem;border-radius:8px;border:1px solid var(--line);border-left:4px solid var(--accent);background:var(--soft)}

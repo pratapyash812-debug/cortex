@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Crepe } from '@milkdown/crepe';
 import { editorViewCtx, editorViewOptionsCtx, parserCtx, serializerCtx, remarkStringifyOptionsCtx } from '@milkdown/kit/core';
 import { callCommand, insert, replaceAll } from '@milkdown/kit/utils';
-import { toggleStrongCommand, toggleEmphasisCommand, wrapInHeadingCommand, wrapInBlockquoteCommand } from '@milkdown/kit/preset/commonmark';
-import { insertTableCommand,toggleStrikethroughCommand } from '@milkdown/kit/preset/gfm';
+import { toggleStrongCommand, toggleEmphasisCommand, wrapInBlockquoteCommand } from '@milkdown/kit/preset/commonmark';
+import { toggleStrikethroughCommand } from '@milkdown/kit/preset/gfm';
 import {toggleMark} from '@milkdown/kit/prose/commands';
 import {undo,redo} from '@milkdown/kit/prose/history';
 import { TextSelection } from '@milkdown/kit/prose/state';
@@ -13,10 +13,14 @@ import { api, type NoteInfo } from '../api';
 import { inlineCanvasPlugin } from '../inlineCanvas';
 import {noteMarkdown} from '../noteMarkdown';
 import {pasteEquations} from '../mathPastePlugin';
-import {formatList} from '../writingCommands';
-import {writingRemark,underlineMark,highlightMark} from '../writingMarks';
+import {clearTextFormatting,formatChecklist,formatList,formatParagraph,formatText} from '../writingCommands';
+import {writingRemark,underlineMark,highlightMark,textStyleMark} from '../writingMarks';
+import {headingLayoutSchema,paragraphLayoutSchema} from '../writingLayout';
+import type {Alignment,TextStyle} from '../writingStyles';
 import {PAGE_FONTS,pageStyle,wordCount} from '../writing';
-export type FormatAction='bold'|'italic'|'underline'|'highlight'|'strike'|'undo'|'redo'|'heading'|'heading1'|'heading2'|'heading3'|'paragraph'|'bullet'|'numbered'|'quote'|'table';
+export type FormatAction = 'bold' | 'italic' | 'underline' | 'highlight' | 'strike' | 'undo' | 'redo' |
+  'paragraph' | `heading${1 | 2 | 3 | 4 | 5 | 6}` | 'bullet' | 'numbered' | 'checklist' | 'quote' |
+  'indent' | 'outdent' | 'clearText' | Alignment | {text: Partial<TextStyle>};
 import { createInsertRequest, figureId, type InsertRequest, type InsertKind } from '../insert';
 export type { InsertRequest, InsertKind } from '../insert';
 import { toEditor, fromEditor, wikiTarget, singleLineMath } from '../wikilinks';
@@ -152,7 +156,9 @@ export function Editor({ path, initial, attachments, notes, onChange, onOpenLink
       ctx.update(editorViewOptionsCtx, previous => ({...previous,handlePaste:(view,event,slice)=>
         pasteEquations(view,event,slice,markdown=>ctx.get(parserCtx)(markdown)) || previous.handlePaste?.(view,event,slice) || false}));
     })
-      .use(writingRemark).use(underlineMark).use(highlightMark).use(findHighlightsPlugin).use(calloutPlugin).use(footnotePlugin).use(inlineCanvasPlugin(() => ({notes: notesRef.current, openNote: (target, newTab) => onOpenLink(target, newTab)}))).use(embedPlugin).use(audioPlugin(() => attachmentsRef.current)).use(pdfPlugin(() => attachmentsRef.current));
+      .use(writingRemark).use(underlineMark).use(highlightMark).use(textStyleMark)
+      .use(paragraphLayoutSchema).use(headingLayoutSchema)
+      .use(findHighlightsPlugin).use(calloutPlugin).use(footnotePlugin).use(inlineCanvasPlugin(() => ({notes: notesRef.current, openNote: (target, newTab) => onOpenLink(target, newTab)}))).use(embedPlugin).use(audioPlugin(() => attachmentsRef.current)).use(pdfPlugin(() => attachmentsRef.current));
     const mathLines = singleLineMath(initial);
     let alive = true;
     crepe.create().then(() => {
@@ -192,13 +198,15 @@ export function Editor({ path, initial, attachments, notes, onChange, onOpenLink
             if(action==='undo'||action==='redo')changed=(action==='undo'?undo:redo)(view.state,view.dispatch);
             else if(action==='underline'||action==='highlight')changed=toggleMark(view.state.schema.marks[action==='underline'?'cortex_underline':'cortex_highlight'])(view.state,view.dispatch);
             else if(action==='strike')changed=callCommand(toggleStrikethroughCommand.key)(ctx);
-            else if(action==='numbered')changed=formatList(view,'numbered');
+            else if(typeof action==='object')changed=formatText(view,action.text);
+            else if(action==='bullet'||action==='numbered')changed=formatList(view,action);
+            else if(action==='checklist')changed=formatChecklist(view);
+            else if(action==='clearText')changed=clearTextFormatting(view);
             else if(action==='quote')changed=callCommand(wrapInBlockquoteCommand.key)(ctx);
             else if (action === 'bold') changed = callCommand(toggleStrongCommand.key)(ctx);
             else if (action === 'italic') changed = callCommand(toggleEmphasisCommand.key)(ctx);
-            else if (action === 'heading') changed = callCommand(wrapInHeadingCommand.key, $from.parent.type.name === 'heading' ? 0 : 2)(ctx);
-            else if (action === 'paragraph' || action.startsWith('heading')) changed = callCommand(wrapInHeadingCommand.key, action === 'paragraph' ? 0 : Number(action.slice(-1)))(ctx);
-            else if (action === 'bullet') {changed=formatList(view,'bullet');} else if (action === 'table') changed = callCommand(insertTableCommand.key, { row: 3, col: 3 })(ctx);
+            else if (action === 'paragraph' || action.startsWith('heading')) changed = formatParagraph(view, action === 'paragraph' ? 0 : Number(action.slice(-1)));
+            else changed = formatParagraph(view, action as Alignment | 'indent' | 'outdent');
             if (changed) view.focus();
             return changed;
           }) ?? false : false,
