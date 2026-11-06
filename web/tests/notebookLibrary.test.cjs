@@ -20,11 +20,11 @@ test('selecting Marketing leaves the other notebook buttons available and All no
   const selected=[];let created=0;
   host=env.host(env.load('components/NotebookLibrary.tsx').NotebookLibrary,{notebooks:[{subject:'Business Economics',path:'Business.md',notes:80},{subject:'International Economics',path:'International.md',notes:12},{subject:'Marketing',path:'Marketing.md',notes:1}],scope:'Marketing',total:93,onSelect:value=>selected.push(value),onCreate:()=>created++});
   const buttons=nodes(host.render(),n=>n.type==='button');
-  const books=buttons.filter(n=>n.props['aria-label']?.startsWith('Open notebook'));
+  const books=buttons.filter(n=>n.props['aria-label']?.startsWith('Open subject'));
   assert.equal(books.length,3);assert.deepEqual(books.map(n=>n.props['aria-pressed']),[false,false,true]);
   books[0].props.onClick();buttons.find(n=>n.props.className.startsWith('library-all')).props.onClick();
   assert.equal(selected[0].path,'Business.md');assert.equal(selected[1],null);
-  buttons.find(n=>n.props['aria-label']==='New notebook').props.onClick();assert.equal(created,1);
+  buttons.find(n=>n.props.className==='library-new-subject').props.onClick();assert.equal(created,1);
  }finally{host?.unmount();env.restore();}
 });
 
