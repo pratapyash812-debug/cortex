@@ -70,6 +70,33 @@ html,body,#root{overflow:hidden}.lean-app{height:100%}
 .writing-format{display:flex;align-items:center;gap:2px;padding-inline-end:6px;border-inline-end:1px solid var(--line)}
 .writing-format select{max-width:120px;min-height:29px;font-size:12px}
 .document-toolbar .writing-format .icon{min-width:28px;min-height:29px}
+.floating-writing-tools {
+  position:fixed;
+  z-index:45;
+  display:grid;
+  gap:4px;
+  max-width:calc(100vw - 16px);
+  padding:6px;
+  border:1px solid var(--line);
+  border-radius:9px;
+  background:var(--surface-secondary);
+  color:var(--fg);
+  box-shadow:0 6px 22px rgba(0,0,0,.22);
+}
+.floating-writing-row{display:flex;align-items:center;gap:3px;flex-wrap:wrap}
+.floating-writing-row + .floating-writing-row{border-top:1px solid var(--line);padding-top:4px}
+.floating-writing-tools .icon{min-width:28px;min-height:28px}
+.floating-writing-tools select {
+  min-height:28px;
+  max-width:120px;
+  border:1px solid var(--line);
+  border-radius:5px;
+  padding:3px 5px;
+  background:var(--bg);
+  color:var(--fg);
+  font:inherit;
+  font-size:12px;
+}
 .document-status{max-width:var(--page-width);margin:16px auto 28px;padding:8px 28px;color:var(--muted);font-size:11px;border-top:1px solid var(--line)}
 .page-appearance label{display:grid;gap:5px;font-size:12px;padding:8px 12px}.page-appearance select{color:var(--fg);background:var(--bg);border:1px solid var(--line);padding:6px;min-width:145px}.page-appearance p{padding:0 12px;max-width:190px}
 .editor-host .milkdown{font-family:inherit;--crepe-font-default:inherit;--crepe-font-title:inherit}
