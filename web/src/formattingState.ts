@@ -1,3 +1,4 @@
+import {undoDepth,redoDepth} from '@milkdown/kit/prose/history';
 import type {EditorState} from '@milkdown/kit/prose/state';
 import type {Mark, ResolvedPos} from '@milkdown/kit/prose/model';
 import {paragraphLayout, textStyle, type Alignment, type TextStyle} from './writingStyles';
@@ -16,6 +17,8 @@ export type FormattingState = {
   align: Alignment | '';
   block: string;
   hasSelection: boolean;
+  canUndo: boolean;
+  canRedo: boolean;
 };
 
 /** Summarize the selected runs, including mixed values, without moving the selection. */
@@ -49,7 +52,8 @@ export function readFormatting(state: EditorState): FormattingState {
   const readBlock = (name: string, attrs: Record<string, unknown>, point: ResolvedPos) => {
     if (name !== 'paragraph' && name !== 'heading') return;
     const nextAlign = paragraphLayout(attrs.align, attrs.indent).align;
-    const nextBlock = name === 'heading' ? `heading${attrs.level}` : 'paragraph';
+    const quoted = Array.from({length: point.depth}, (_, index) => point.node(index + 1)).some(node => node.type.name === 'blockquote');
+    const nextBlock = quoted ? 'quote' : name === 'heading' ? `heading${attrs.level}` : 'paragraph';
     align = !sawBlock || align === nextAlign ? nextAlign : '';
     block = !sawBlock || block === nextBlock ? nextBlock : '';
     let list = '', checked = false;
@@ -73,5 +77,5 @@ export function readFormatting(state: EditorState): FormattingState {
   }
   if (!sawRun) readRun(state.storedMarks ?? $from.marks());
   if (!sawBlock) readBlock($from.parent.type.name, $from.parent.attrs, $from);
-  return {marks, font, size, colour, align, block, hasSelection: !empty};
+  return {marks, font, size, colour, align, block, hasSelection: !empty, canUndo: undoDepth(state)>0, canRedo: redoDepth(state)>0};
 }

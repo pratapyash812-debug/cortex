@@ -4,7 +4,7 @@ import { defaultValueCtx, rootCtx, editorViewCtx, editorViewOptionsCtx, parserCt
 import { callCommand, insert, replaceAll } from '@milkdown/kit/utils';
 import { toggleInlineCodeCommand, wrapInBlockquoteCommand } from '@milkdown/kit/preset/commonmark';
 import {linkTooltipAPI} from '@milkdown/kit/component/link-tooltip';
-import {toggleMark} from '@milkdown/kit/prose/commands';
+import {lift,toggleMark} from '@milkdown/kit/prose/commands';
 import {undo,redo} from '@milkdown/kit/prose/history';
 import { TextSelection } from '@milkdown/kit/prose/state';
 import '@milkdown/crepe/theme/common/style.css';
@@ -16,11 +16,13 @@ import {pasteEquations} from '../mathPastePlugin';
 import {clearTextFormatting,formatChecklist,formatList,formatParagraph,formatText} from '../writingCommands';
 import {writingRemark,underlineMark,highlightMark,textStyleMark} from '../writingMarks';
 import {writingLayoutSchema} from '../writingLayout';
+import {writingListView} from '../writingListView';
 import type {Alignment,TextStyle} from '../writingStyles';
 import {PAGE_FONTS,pageStyle,wordCount} from '../writing';
 import {FloatingWritingTools} from './WritingTools';
 import {quickFormattingPlugin, type FormattingPopup} from '../quickFormatting';
-import {markNames} from '../formattingState';
+import {markNames,type FormattingState} from '../formattingState';
+import {writingShortcut} from '../writingShortcuts';
 import {runClipboardAction, type ClipboardAction} from '../editorClipboard';
 export type FormatAction = 'bold' | 'italic' | 'underline' | 'highlight' | 'strike' | 'undo' | 'redo' |
   'paragraph' | `heading${1 | 2 | 3 | 4 | 5 | 6}` | 'bullet' | 'numbered' | 'checklist' | 'quote' |
@@ -29,7 +31,7 @@ import { createInsertRequest, figureId, type InsertRequest, type InsertKind } fr
 export type { InsertRequest, InsertKind } from '../insert';
 import { toEditor, fromEditor, wikiTarget, singleLineMath } from '../wikilinks';
 import { calloutPlugin, footnotePlugin, embedPlugin, audioPlugin, pdfPlugin, insertEmbedLine, mountEmbed, destroyEmbed } from '../editorExtras';
-import { findTextIndex } from '../findText';
+import { findTextIndex, type FindOptions } from '../findText';
 import { createEquationRequest, isEquationShortcut, type EquationRequest } from '../equation';
 export type { EquationRequest } from '../equation';
 import { findHighlightsKey, findHighlightsPlugin, findInDocument, scrollFindMatch } from '../findPlugin';
@@ -41,7 +43,8 @@ export interface EditorHandle {
   /** Current document markdown, serialized synchronously from Milkdown's live ProseMirror state. */
   readMarkdown: () => string | null;
   /** Finds and selects a case-insensitive literal match in this editor. index is zero-based, or -1 when there are no matches. */
-  findText: (query: string, direction: 'next' | 'previous' | 'first') => { count: number; index: number };
+  findText: (query: string, direction: 'next' | 'previous' | 'first', options?: FindOptions) => { count: number; index: number };
+  selectedText: () => string;
   requestEquation: () => boolean;
   requestInsert: (kind: InsertKind) => boolean;
   captureCanvasInsert: () => ((canvasPath: string) => void) | null;
@@ -71,6 +74,7 @@ interface Props {
   onReady?: () => void;
   documentStyle?:Record<string,unknown>;
   onWordCount?:(count:number)=>void;
+  onFormatting?:(state:FormattingState)=>void;
   /** Writing help: the AI button over selected text. */
   aiEnabled?: boolean;
 }
@@ -81,7 +85,7 @@ interface Picker { x: number; y: number; from: number; query: string; sel: numbe
 
 function createEditor() {
   return new Crepe({
-    features: { [Crepe.Feature.BlockEdit]: false, [Crepe.Feature.Toolbar]: false },
+    features: { [Crepe.Feature.BlockEdit]: false, [Crepe.Feature.Toolbar]: false, [Crepe.Feature.ListItem]: false },
     featureConfigs: {
       [Crepe.Feature.ImageBlock]: { onUpload: async (file: File) => (await api.upload(file)).url },
       [Crepe.Feature.Placeholder]: { text: 'Start writing…', mode: 'block' },
@@ -97,7 +101,7 @@ export function preloadEditor() {
 }
 
 // Block editor (slash menu, drag handles, tables, code, images) with Obsidian-style [[links]].
-export function Editor({ path, initial, attachments, notes, onChange, onOpenLink, handleRef, onEquationRequest, onInsertRequest, autoFocus = false, onReady,documentStyle={},onWordCount }: Props) {
+export function Editor({ path, initial, attachments, notes, onChange, onOpenLink, handleRef, onEquationRequest, onInsertRequest, autoFocus = false, onReady,documentStyle={},onWordCount,onFormatting }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const crepeRef = useRef<Crepe | null>(null);
   const toolbar = useRef<HTMLDivElement>(null);
@@ -120,6 +124,7 @@ export function Editor({ path, initial, attachments, notes, onChange, onOpenLink
   changeRef.current = onChange;
   const openLinkRef = useRef(onOpenLink);
   openLinkRef.current = onOpenLink;
+  const formattingCallback=useRef(onFormatting);formattingCallback.current=onFormatting;
   const countRef=useRef(onWordCount);countRef.current=onWordCount;
   const [picker, setPicker] = useState<Picker | null>(null);
   const pickerRef = useRef<Picker | null>(null);
@@ -189,8 +194,8 @@ export function Editor({ path, initial, attachments, notes, onChange, onOpenLink
         pasteEquations(view,event,slice,markdown=>ctx.get(parserCtx)(markdown)) || previous.handlePaste?.(view,event,slice) || false}));
     })
       .use(writingRemark).use(underlineMark).use(highlightMark).use(textStyleMark)
-      .use(writingLayoutSchema)
-      .use(quickFormattingPlugin(setFormattingPopup, () => toolbar.current))
+      .use(writingLayoutSchema).use(writingListView)
+      .use(quickFormattingPlugin(setFormattingPopup, () => toolbar.current, state => formattingCallback.current?.(state)))
       .use(findHighlightsPlugin).use(calloutPlugin).use(footnotePlugin).use(inlineCanvasPlugin(() => ({notes: notesRef.current, openNote: (target, newTab) => openLinkRef.current(target, newTab)}))).use(embedPlugin).use(audioPlugin(() => attachmentsRef.current)).use(pdfPlugin(() => attachmentsRef.current));
     const mathLines = singleLineMath(initial);
     let alive = true;
@@ -223,7 +228,7 @@ export function Editor({ path, initial, attachments, notes, onChange, onOpenLink
       };
       formatRef.current = action => alive ? crepe.editor.action(ctx => {
             const view = ctx.get(editorViewCtx), { $from } = view.state.selection;
-            if ($from.parent.type.spec.code) return false;
+            if ($from.parent.type.spec.code && action !== 'undo' && action !== 'redo') return false;
             if (action === 'equation') {
               const opened = requestEquationRef.current();
               if (opened) setFormattingPopup(null);
@@ -251,7 +256,11 @@ export function Editor({ path, initial, attachments, notes, onChange, onOpenLink
             else if(action==='bullet'||action==='numbered')changed=formatList(view,action);
             else if(action==='checklist')changed=formatChecklist(view);
             else if(action==='clearText')changed=clearTextFormatting(view);
-            else if(action==='quote')changed=callCommand(wrapInBlockquoteCommand.key)(ctx);
+            else if(action==='quote'){
+              let insideQuote = false;
+              for(let depth=$from.depth;depth>0;depth--) insideQuote ||= $from.node(depth).type.name==='blockquote';
+              changed=insideQuote ? lift(view.state,view.dispatch) : callCommand(wrapInBlockquoteCommand.key)(ctx);
+            }
             else if (action === 'paragraph' || action.startsWith('heading')) changed = formatParagraph(view, action === 'paragraph' ? 0 : Number(action.slice(-1)));
             else changed = formatParagraph(view, action as Alignment | 'indent' | 'outdent');
             if (changed) view.focus();
@@ -265,16 +274,20 @@ export function Editor({ path, initial, attachments, notes, onChange, onOpenLink
               markdown => ctx.get(parserCtx)(toEditor(markdown, attachmentsRef.current)), () => {});
             return request ? canvasPath => request.applyMarkdown(`![[${canvasPath}]]`) : null;
           }),
+          selectedText: () => alive ? crepe.editor.action(ctx => {
+            const {doc,selection} = ctx.get(editorViewCtx).state;
+            return selection.to - selection.from <= 200 ? doc.textBetween(selection.from, selection.to, '\n').trim() : '';
+          }) ?? '' : '',
           requestEquation: () => alive && requestEquationRef.current(),
           requestInsert: kind => alive && requestInsertRef.current(kind),
           format: action => formatRef.current(action),
           readMarkdown: () => alive ? readMarkdown() ?? null : null,
-          findText: (query, direction) => alive ? crepe.editor.action(ctx => {
+          findText: (query, direction, options) => alive ? crepe.editor.action(ctx => {
             const view = ctx.get(editorViewCtx), { doc, selection } = view.state;
-            const matches = findInDocument(doc, query);
+            const matches = findInDocument(doc, query, options);
             const index = findTextIndex(matches, selection.from, direction);
             const match = matches[index];
-            const transaction = view.state.tr.setMeta(findHighlightsKey, { query, activeFrom: match?.from ?? null }).setMeta('addToHistory', false);
+            const transaction = view.state.tr.setMeta(findHighlightsKey, { query, options, matches, activeFrom: match?.from ?? null }).setMeta('addToHistory', false);
             if (match) transaction.setSelection(TextSelection.create(doc, match.from, match.to));
             view.dispatch(transaction);
             if (match) scrollFindMatch(view, match);
@@ -357,8 +370,10 @@ export function Editor({ path, initial, attachments, notes, onChange, onOpenLink
   };
 
   const onKeyDownCapture = (e: React.KeyboardEvent) => {
-    if ((e.target as HTMLElement).closest('.inline-canvas')) return;
-    if((e.ctrlKey||e.metaKey)&&!e.altKey&&e.key.toLowerCase()==='u'){e.preventDefault();handleRef?.current?.format('underline');return;}
+    if (!(e.target as HTMLElement).closest('.ProseMirror') || (e.target as HTMLElement).closest('.inline-canvas, input, textarea, select, math-field, [contenteditable="false"]') || e.nativeEvent.isComposing) return;
+    const formatAction = writingShortcut(e.nativeEvent);
+    if (formatAction) { e.preventDefault(); e.stopPropagation(); formatRef.current(formatAction); return; }
+    if((e.ctrlKey||e.metaKey)&&!e.altKey&&!e.shiftKey&&e.key.toLowerCase()==='u'){e.preventDefault();handleRef?.current?.format('underline');return;}
     if (isEquationShortcut(e.nativeEvent)) {
       const target = e.target as HTMLElement;
       const view = crepeRef.current?.editor.action(ctx => ctx.get(editorViewCtx));

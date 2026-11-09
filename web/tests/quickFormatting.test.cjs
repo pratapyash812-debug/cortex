@@ -18,7 +18,7 @@ test('the toolbar distinguishes mixed formatting from the current caret style', 
     schema.node('paragraph', {align: 'center'}, schema.text('Bold', [style, schema.mark('strong')])),
     schema.node('paragraph', null, schema.text('Plain')),
   ]);
-  const env = environment();
+  const env = environment({modules:{'@milkdown/kit/prose/history': await import('@milkdown/kit/prose/history')}});
   try {
     const {readFormatting} = env.load('formattingState.ts');
     const at = (from, to) => readFormatting(EditorState.create({doc, selection: TextSelection.create(doc, from, to)}));

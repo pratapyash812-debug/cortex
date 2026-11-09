@@ -59,7 +59,7 @@ test('find scrolling accounts for sticky controls, multiline matches and note bo
 test('only the owning pane scrolls below its actual toolbar and Find bar without requesting focus', async () => {
   const { scrollFindMatch } = await ready;
   const rect = (top, bottom) => ({ top, bottom });
-  const controls = { '.page-tools': rect(43, 93), '.find-note': rect(101, 147) };
+  const controls = { '.document-toolbar': rect(43, 93), '.find-note': rect(101, 147) };
   const calls = [];
   const pane = {
     scrollTop: 0, scrollHeight: 15000, clientHeight: 685,
@@ -70,7 +70,7 @@ test('only the owning pane scrolls below its actual toolbar and Find bar without
     focus: () => assert.fail('pane must not steal focus'),
   };
   const view = {
-    isDestroyed: false, dom: { isConnected: true, closest: selector => { assert.equal(selector, '.main.pane'); return pane; } },
+    isDestroyed: false, dom: { isConnected: true, closest: selector => { assert.equal(selector, '.lean-document, .main.pane'); return pane; } },
     coordsAtPos: () => rect(12133, 12153), focus: () => assert.fail('editor must not steal focus'),
   };
   scrollFindMatch(view, { from: 10000, to: 10010 });

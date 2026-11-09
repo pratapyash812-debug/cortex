@@ -41,6 +41,16 @@ test('maps lowercase expansions to the original source character', () => {
   assert.deepEqual(findTextMatches([{ from: 9, text: 'İstanbul', block: 4 }], 'i'), []);
 });
 
+test('whole words and case matching preserve Unicode boundaries', () => {
+  const segments = [{from:1,text:'Æble æble æbletræ p_æble æble!',block:1}];
+  assert.deepEqual(findTextMatches(segments,'æble',{wholeWord:true}),[
+    {from:1,to:5},{from:6,to:10},{from:26,to:30},
+  ]);
+  assert.deepEqual(findTextMatches(segments,'æble',{wholeWord:true,matchCase:true}),[
+    {from:6,to:10},{from:26,to:30},
+  ]);
+});
+
 test('cycles forward and backward with wraparound', () => {
   const matches = [{ from: 3, to: 5 }, { from: 10, to: 12 }, { from: 20, to: 22 }];
   assert.equal(findTextIndex(matches, 10, 'next'), 2);

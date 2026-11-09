@@ -81,6 +81,7 @@ function environment(options = {}) {
     const loaded = new Module(file, module);
     loaded.filename = file; loaded.paths = Module._nodeModulePaths(path.dirname(file));
     loaded.require = id => {
+      if (options.modules && Object.hasOwn(options.modules, id)) return options.modules[id];
       if (id === './api' || id === '../api') return { api: options.api || {} };
       if (id === 'react') return react;
       if (id === 'react/jsx-runtime') return { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) };

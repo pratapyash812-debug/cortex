@@ -7,6 +7,7 @@ export interface TextSegment {
 }
 
 export interface TextMatch { from: number; to: number }
+export interface FindOptions { matchCase?: boolean; wholeWord?: boolean }
 
 interface FoldedText {
   value: string;
@@ -16,12 +17,12 @@ interface FoldedText {
 }
 
 /** Lowercase text while retaining UTF-16 source offsets, including characters whose lowercase form expands. */
-function foldWithOffsets(text: string): FoldedText {
+function foldWithOffsets(text: string, matchCase?: boolean): FoldedText {
   let value = '';
   const starts: number[] = [], ends: number[] = [], boundaries = new Set<number>([0]);
   let source = 0;
   for (const char of text) {
-    const folded = char.toLowerCase();
+    const folded = matchCase ? char : char.toLowerCase();
     const begin = value.length;
     value += folded;
     for (let i = 0; i < folded.length; i++) { starts.push(source); ends.push(source + char.length); }
@@ -33,9 +34,9 @@ function foldWithOffsets(text: string): FoldedText {
 }
 
 /** Find case-insensitive literal matches without crossing text blocks or non-text gaps. */
-export function findTextMatches(segments: TextSegment[], query: string): TextMatch[] {
+export function findTextMatches(segments: TextSegment[], query: string, options: FindOptions = {}): TextMatch[] {
   if (!query) return [];
-  const needle = foldWithOffsets(query).value;
+  const needle = foldWithOffsets(query, options.matchCase).value;
   if (!needle) return [];
 
   const blocks: Array<{ block: TextSegment['block']; from: number; text: string }> = [];
@@ -48,14 +49,19 @@ export function findTextMatches(segments: TextSegment[], query: string): TextMat
 
   const matches: TextMatch[] = [];
   for (const block of blocks) {
-    const haystack = foldWithOffsets(block.text);
+    const haystack = foldWithOffsets(block.text, options.matchCase);
     let at = 0;
     while ((at = haystack.value.indexOf(needle, at)) !== -1) {
       const end = at + needle.length;
       // Do not return half of a code point when its lowercase representation expands.
       if (haystack.boundaries.has(at) && haystack.boundaries.has(end)) {
-        const from = block.from + haystack.starts[at];
-        const to = block.from + haystack.ends[end - 1];
+        const startOffset = haystack.starts[at], endOffset = haystack.ends[end - 1];
+        const from = block.from + startOffset, to = block.from + endOffset;
+        const word = /[\p{L}\p{M}\p{N}\p{Pc}]/u;
+        if (options.wholeWord && (/[\p{L}\p{M}\p{N}\p{Pc}]$/u.test(block.text.slice(Math.max(0, startOffset - 2), startOffset)) || word.test(String.fromCodePoint(block.text.codePointAt(endOffset) ?? 0)))) {
+          at++;
+          continue;
+        }
         if (!matches.length || matches[matches.length - 1].from !== from || matches[matches.length - 1].to !== to) matches.push({ from, to });
       }
       at += 1;

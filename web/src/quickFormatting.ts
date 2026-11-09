@@ -22,6 +22,7 @@ const nativeContext = 'a, input, textarea, select, [contenteditable="false"], .i
 export function quickFormattingPlugin(
   show: (state: FormattingPopup | null) => void,
   popup: () => HTMLElement | null,
+  report?: (state: FormattingState) => void,
 ) {
   return $prose(() => new Plugin({
     view(view) {
@@ -35,6 +36,13 @@ export function quickFormattingPlugin(
       let context: {anchor: FormattingAnchor; selection: Selection} | null = null;
       let last = view.state;
       let formatting = readFormatting(last);
+      let lastReport = '';
+      const read = () => {
+        if (last !== view.state) { formatting = readFormatting(view.state); last = view.state; }
+        const value = JSON.stringify(formatting);
+        if (value !== lastReport) { lastReport = value; report?.(formatting); }
+      };
+      read();
       let selectedAnchor: {selection: Selection; rect: FormattingAnchor} | null = null;
       let lastPopup: FormattingPopup | null = null;
 
@@ -45,10 +53,6 @@ export function quickFormattingPlugin(
       };
 
       const showAt = (anchor: FormattingAnchor, minTop: number, maxBottom: number, contextMenu: boolean) => {
-        if (last !== view.state) {
-          formatting = readFormatting(view.state);
-          last = view.state;
-        }
         const previous = lastPopup;
         if (previous?.anchor === anchor && previous.minTop === minTop && previous.maxBottom === maxBottom &&
             previous.contextMenu === contextMenu && previous.formatting === formatting) return;
@@ -65,6 +69,7 @@ export function quickFormattingPlugin(
         if (frame) return;
         frame = win.requestAnimationFrame(() => {
           frame = 0;
+          read();
           const {selection} = view.state;
           if (!view.dom.isConnected || !view.editable || view.composing || dragging || dismissed?.eq(selection) ||
               (!view.hasFocus() && !popup()?.contains(doc.activeElement))) {

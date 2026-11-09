@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import {useLayoutEffect, useRef, useState, type RefObject} from 'react';
 import {createPortal} from 'react-dom';
+import {shortcutLabel,writingShortcuts} from '../writingShortcuts';
 import type {FormatAction} from './Editor';
 import type {FormattingPopup} from '../quickFormatting';
 import type {FormattingState} from '../formattingState';
@@ -44,12 +45,17 @@ const selectionTools = [
 ] as const;
 type Tool = (typeof history | typeof emphasis | typeof lists | typeof alignment | typeof selectionTools)[number];
 type ApplyFormat = (action: FormatAction) => void;
+const mac = /Mac/i.test(navigator.platform);
 
 function formatButtons(tools: readonly Tool[], format: ApplyFormat, state?: FormattingState) {
   return tools.map(({key, label, Icon}) => {
-    const pressed = state?.marks[key as keyof FormattingState['marks']];
+    const isAlignment = alignment.some(tool => tool.key === key);
+    const pressed = isAlignment && state ? state.align === '' ? 'mixed' : key === state.align
+      : state?.marks[key as keyof FormattingState['marks']];
+    const shortcut = writingShortcuts.find(([,action]) => action === key)?.[0];
+    const disabled = key === 'undo' ? state && !state.canUndo : key === 'redo' ? state && !state.canRedo : false;
     return (
-    <button type="button" className="icon" key={key} title={label} aria-label={label}
+    <button type="button" className="icon" key={key} title={shortcut ? `${label} (${shortcutLabel(shortcut, mac)})` : label} aria-label={label} disabled={disabled}
       aria-pressed={pressed} onMouseDown={event => event.preventDefault()} onClick={() => format(key)}><Icon size={16}/></button>
     );
   });
@@ -142,9 +148,11 @@ export function FloatingWritingTools({popup, toolbar, format, clipboard}: {
   );
 }
 
-export function WritingTools({format, meta, onStyle, onError}: {
+export function WritingTools({format, meta, onStyle, onError, state, onShortcuts}: {
   format: (action: FormatAction) => void;
   meta: Record<string, unknown>;
+  state?: FormattingState;
+  onShortcuts: () => void;
   onStyle: (style: PageStyle) => Promise<void>;
   onError: (error: unknown) => void;
 }) {
@@ -160,16 +168,16 @@ export function WritingTools({format, meta, onStyle, onError}: {
     finally { pending.current = false; setSaving(false); }
   };
   return <>
-    <div className="writing-format" role="group" aria-label="Edit history">{formatButtons(history, format)}</div>
+    <div className="writing-format" role="group" aria-label="Edit history">{formatButtons(history, format, state)}</div>
     <div className="writing-format writing-choices" role="group" aria-label="Font and colour">
-      <FontChoices format={format}/>
+      <FontChoices format={format} state={state}/>
     </div>
-    <div className="writing-format" role="group" aria-label="Text emphasis">{formatButtons(emphasis, format)}</div>
+    <div className="writing-format" role="group" aria-label="Text emphasis">{formatButtons(emphasis, format, state)}</div>
     <div className="writing-format" role="group" aria-label="Paragraph style">
-      <ParagraphChoices format={format}/>
+      <ParagraphChoices format={format} value={state?.block}/>
     </div>
-    <div className="writing-format" role="group" aria-label="Lists and indentation">{formatButtons(lists, format)}</div>
-    <div className="writing-format" role="group" aria-label="Paragraph alignment">{formatButtons(alignment, format)}</div>
+    <div className="writing-format" role="group" aria-label="Lists and indentation">{formatButtons(lists, format, state)}</div>
+    <div className="writing-format" role="group" aria-label="Paragraph alignment">{formatButtons(alignment, format, state)}</div>
     <details className="lean-menu"><summary>Page</summary>
       <div className="page-appearance">
         <label>Page font<select aria-label="Page font" value={style.font} disabled={saving} onChange={event => void change({...style, font: event.target.value as PageStyle['font']})}>
@@ -179,6 +187,7 @@ export function WritingTools({format, meta, onStyle, onError}: {
           {[0, 14, 16, 18, 20, 24].map(size => <option key={size} value={size}>{size ? `${size} px` : 'Default'}</option>)}
         </select></label>
         <p className="muted small">Applies to this whole page.</p>
+        <button onClick={event=>{event.currentTarget.closest('details')?.removeAttribute('open');onShortcuts();}}>Keyboard shortcuts</button>
       </div>
     </details>
   </>;
