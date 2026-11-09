@@ -10,8 +10,25 @@ export function formatList(view:EditorView,kind:'bullet'|'numbered'):boolean{
   for(let depth=$from.depth;depth>0;depth--){
     const current=$from.node(depth);
     if(['bullet_list','ordered_list'].includes(current.type.name)){
-      if(current.type===type)return liftListItem(state.schema.nodes.list_item)(state,view.dispatch);
-      view.dispatch(state.tr.setNodeMarkup($from.before(depth),type));return true;
+      const listPos = $from.before(depth);
+      const tr = state.tr;
+      const selected = listItemsInSelection(tr);
+      if (current.type !== type) {
+        tr.setNodeMarkup(listPos, type);
+        current.forEach((item, offset) => {
+          if (item.attrs.checked != null) {
+            tr.setNodeMarkup(listPos + 1 + offset, undefined, {...item.attrs, checked: null});
+          }
+        });
+      } else {
+        for (const position of selected) {
+          const item = tr.doc.nodeAt(position)!;
+          if (item.attrs.checked != null) tr.setNodeMarkup(position, undefined, {...item.attrs, checked: null});
+        }
+        if (!tr.docChanged) return liftListItem(state.schema.nodes.list_item)(state,view.dispatch);
+      }
+      view.dispatch(tr);
+      return true;
     }
   }
   return wrapInList(type)(state,view.dispatch);
@@ -32,14 +49,19 @@ function listItemPosition(at: ResolvedPos): number | undefined {
   }
 }
 
+function listItemsInSelection(tr: Transaction): Set<number> {
+  const items = new Set<number>();
+  textBlocks(tr, (_node, position) => {
+    const item = listItemPosition(tr.doc.resolve(position));
+    if (item !== undefined) items.add(item);
+  });
+  return items;
+}
+
 export function formatChecklist(view: EditorView): boolean {
   const {state} = view;
   const toggleItems = (tr: Transaction) => {
-    const items = new Set<number>();
-    textBlocks(tr, (_node, position) => {
-      const item = listItemPosition(tr.doc.resolve(position));
-      if (item !== undefined) items.add(item);
-    });
+    const items = listItemsInSelection(tr);
     const enable = [...items].some(position => tr.doc.nodeAt(position)?.attrs.checked == null);
     for (const position of items) {
       const item = tr.doc.nodeAt(position)!;

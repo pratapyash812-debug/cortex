@@ -2,9 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Crepe } from '@milkdown/crepe';
 import { editorViewCtx, editorViewOptionsCtx, parserCtx, serializerCtx, remarkStringifyOptionsCtx } from '@milkdown/kit/core';
 import { callCommand, insert, replaceAll } from '@milkdown/kit/utils';
-import { toggleStrongCommand, toggleEmphasisCommand, toggleInlineCodeCommand, wrapInBlockquoteCommand } from '@milkdown/kit/preset/commonmark';
+import { toggleInlineCodeCommand, wrapInBlockquoteCommand } from '@milkdown/kit/preset/commonmark';
 import {linkTooltipAPI} from '@milkdown/kit/component/link-tooltip';
-import { toggleStrikethroughCommand } from '@milkdown/kit/preset/gfm';
 import {toggleMark} from '@milkdown/kit/prose/commands';
 import {undo,redo} from '@milkdown/kit/prose/history';
 import { TextSelection } from '@milkdown/kit/prose/state';
@@ -20,7 +19,9 @@ import {headingLayoutSchema,paragraphLayoutSchema} from '../writingLayout';
 import type {Alignment,TextStyle} from '../writingStyles';
 import {PAGE_FONTS,pageStyle,wordCount} from '../writing';
 import {FloatingWritingTools} from './WritingTools';
-import {quickFormattingPlugin, type FormattingAnchor} from '../quickFormatting';
+import {quickFormattingPlugin, type FormattingPopup} from '../quickFormatting';
+import {markNames} from '../formattingState';
+import {runClipboardAction, type ClipboardAction} from '../editorClipboard';
 export type FormatAction = 'bold' | 'italic' | 'underline' | 'highlight' | 'strike' | 'undo' | 'redo' |
   'paragraph' | `heading${1 | 2 | 3 | 4 | 5 | 6}` | 'bullet' | 'numbered' | 'checklist' | 'quote' |
   'indent' | 'outdent' | 'clearText' | 'inlineCode' | 'link' | 'equation' | Alignment | {text: Partial<TextStyle>};
@@ -83,7 +84,10 @@ export function Editor({ path, initial, attachments, notes, onChange, onOpenLink
   const host = useRef<HTMLDivElement>(null);
   const crepeRef = useRef<Crepe | null>(null);
   const toolbar = useRef<HTMLDivElement>(null);
-  const [formattingAnchor, setFormattingAnchor] = useState<FormattingAnchor | null>(null);
+  const [formattingPopup, setFormattingPopup] = useState<FormattingPopup | null>(null);
+  const [clipboardMessage, setClipboardMessage] = useState('');
+  const clipboardBusy = useRef(false);
+  const clipboardTimer = useRef<number | undefined>(undefined);
   const formatRef = useRef<(action: FormatAction) => boolean>(() => false);
   const equationCallback = useRef(onEquationRequest);
   equationCallback.current = onEquationRequest;
@@ -118,7 +122,11 @@ export function Editor({ path, initial, attachments, notes, onChange, onOpenLink
     hoverLink.current = null;
     hideTimer.current = window.setTimeout(() => setPreview(null), delay);
   };
-  useEffect(() => () => { window.clearTimeout(showTimer.current); window.clearTimeout(hideTimer.current); }, []);
+  useEffect(() => () => {
+    window.clearTimeout(showTimer.current);
+    window.clearTimeout(hideTimer.current);
+    window.clearTimeout(clipboardTimer.current);
+  }, []);
   useEffect(() => {
     const slot = previewBox.current;
     if (!preview || !slot) return;
@@ -164,7 +172,7 @@ export function Editor({ path, initial, attachments, notes, onChange, onOpenLink
     })
       .use(writingRemark).use(underlineMark).use(highlightMark).use(textStyleMark)
       .use(paragraphLayoutSchema).use(headingLayoutSchema)
-      .use(quickFormattingPlugin(setFormattingAnchor, () => toolbar.current))
+      .use(quickFormattingPlugin(setFormattingPopup, () => toolbar.current))
       .use(findHighlightsPlugin).use(calloutPlugin).use(footnotePlugin).use(inlineCanvasPlugin(() => ({notes: notesRef.current, openNote: (target, newTab) => onOpenLink(target, newTab)}))).use(embedPlugin).use(audioPlugin(() => attachmentsRef.current)).use(pdfPlugin(() => attachmentsRef.current));
     const mathLines = singleLineMath(initial);
     let alive = true;
@@ -193,7 +201,7 @@ export function Editor({ path, initial, attachments, notes, onChange, onOpenLink
             if ($from.parent.type.spec.code) return false;
             if (action === 'equation') {
               const opened = requestEquationRef.current();
-              if (opened) setFormattingAnchor(null);
+              if (opened) setFormattingPopup(null);
               return opened;
             }
             if (action === 'link') {
@@ -204,21 +212,21 @@ export function Editor({ path, initial, attachments, notes, onChange, onOpenLink
               } else {
                 links.addLink(selection.from, selection.to);
               }
-              setFormattingAnchor(null);
+              setFormattingPopup(null);
               return true;
             }
             let changed = false;
             if(action==='undo'||action==='redo')changed=(action==='undo'?undo:redo)(view.state,view.dispatch);
-            else if(action==='underline'||action==='highlight')changed=toggleMark(view.state.schema.marks[action==='underline'?'cortex_underline':'cortex_highlight'])(view.state,view.dispatch);
-            else if(action==='strike')changed=callCommand(toggleStrikethroughCommand.key)(ctx);
             else if(action==='inlineCode')changed=callCommand(toggleInlineCodeCommand.key)(ctx);
+            else if(action==='bold'||action==='italic'||action==='underline'||action==='highlight'||action==='strike'){
+              const mark = view.state.schema.marks[markNames[action]];
+              changed = toggleMark(mark, null, {removeWhenPresent: false})(view.state, view.dispatch);
+            }
             else if(typeof action==='object')changed=formatText(view,action.text);
             else if(action==='bullet'||action==='numbered')changed=formatList(view,action);
             else if(action==='checklist')changed=formatChecklist(view);
             else if(action==='clearText')changed=clearTextFormatting(view);
             else if(action==='quote')changed=callCommand(wrapInBlockquoteCommand.key)(ctx);
-            else if (action === 'bold') changed = callCommand(toggleStrongCommand.key)(ctx);
-            else if (action === 'italic') changed = callCommand(toggleEmphasisCommand.key)(ctx);
             else if (action === 'paragraph' || action.startsWith('heading')) changed = formatParagraph(view, action === 'paragraph' ? 0 : Number(action.slice(-1)));
             else changed = formatParagraph(view, action as Alignment | 'indent' | 'outdent');
             if (changed) view.focus();
@@ -391,11 +399,31 @@ export function Editor({ path, initial, attachments, notes, onChange, onOpenLink
     if (e.button === 1 && (e.target as HTMLElement).closest('a[href^="wiki:"]')) e.preventDefault();
   };
 
+  const clipboard = async (action: ClipboardAction) => {
+    const crepe = crepeRef.current;
+    if (!crepe || clipboardBusy.current) return;
+    clipboardBusy.current = true;
+    let message: string;
+    try {
+      const view = crepe.editor.action(ctx => ctx.get(editorViewCtx));
+      message = await runClipboardAction(view, action);
+    } catch {
+      message = 'Clipboard access was blocked. Try the keyboard shortcut.';
+    } finally {
+      clipboardBusy.current = false;
+    }
+    if (crepeRef.current !== crepe) return;
+    window.clearTimeout(clipboardTimer.current);
+    setClipboardMessage(message);
+    clipboardTimer.current = window.setTimeout(() => setClipboardMessage(''), 3500);
+  };
+
   const style=pageStyle(documentStyle);
   return (
     <div style={{fontFamily:PAGE_FONTS[style.font]||undefined,'--editor-font-size':style.size?`${style.size}px`:undefined} as React.CSSProperties} className="editor-host" onDoubleClickCapture={onDoubleClickCapture} onKeyUp={onKeyUp} onInput={onKeyUp} onKeyDownCapture={onKeyDownCapture} onClickCapture={onClickCapture} onAuxClick={onAuxClick} onMouseDownCapture={onMouseDownCapture} onMouseOver={onMouseOver} onMouseOut={onMouseOut} onKeyDown={() => hidePreview()}>
       <div ref={host} />
-      {formattingAnchor && <FloatingWritingTools anchor={formattingAnchor} toolbar={toolbar} format={action => formatRef.current(action)}/>}
+      {formattingPopup && <FloatingWritingTools popup={formattingPopup} toolbar={toolbar} format={action => formatRef.current(action)} clipboard={clipboard}/>}
+      {clipboardMessage && <div className="editor-clipboard-feedback" role="status">{clipboardMessage}</div>}
       {preview && (
         <div className="hover-preview" role="tooltip" aria-label="Note preview" style={{ left: preview.left, top: preview.top }}
           onMouseEnter={() => window.clearTimeout(hideTimer.current)} onMouseLeave={() => hidePreview(150)}>
