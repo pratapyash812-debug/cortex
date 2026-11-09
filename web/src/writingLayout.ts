@@ -1,4 +1,5 @@
-import {headingSchema, paragraphSchema} from '@milkdown/kit/preset/commonmark';
+import {nodesCtx} from '@milkdown/kit/core';
+import type {MilkdownPlugin} from '@milkdown/kit/ctx';
 import type {DOMOutputSpec, TagParseRule} from '@milkdown/kit/prose/model';
 import type {NodeSchema} from '@milkdown/kit/transformer';
 import {paragraphLayout} from './writingStyles';
@@ -57,5 +58,9 @@ function withLayout(base: NodeSchema): NodeSchema {
   };
 }
 
-export const paragraphLayoutSchema = paragraphSchema.extendSchema(previous => ctx => withLayout(previous(ctx)));
-export const headingLayoutSchema = headingSchema.extendSchema(previous => ctx => withLayout(previous(ctx)));
+// Node order determines how ProseMirror fills an empty document. Extend the
+// existing specs in place so a recursive block cannot become the default.
+export const writingLayoutSchema: MilkdownPlugin = ctx => () => {
+  ctx.update(nodesCtx, nodes => nodes.map(([name, spec]): [string, NodeSchema] =>
+    [name, name === 'paragraph' || name === 'heading' ? withLayout(spec) : spec]));
+};

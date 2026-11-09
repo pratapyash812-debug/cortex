@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Crepe } from '@milkdown/crepe';
-import { editorViewCtx, editorViewOptionsCtx, parserCtx, serializerCtx, remarkStringifyOptionsCtx } from '@milkdown/kit/core';
+import { defaultValueCtx, rootCtx, editorViewCtx, editorViewOptionsCtx, parserCtx, serializerCtx, remarkStringifyOptionsCtx } from '@milkdown/kit/core';
 import { callCommand, insert, replaceAll } from '@milkdown/kit/utils';
 import { toggleInlineCodeCommand, wrapInBlockquoteCommand } from '@milkdown/kit/preset/commonmark';
 import {linkTooltipAPI} from '@milkdown/kit/component/link-tooltip';
@@ -15,7 +15,7 @@ import {noteMarkdown} from '../noteMarkdown';
 import {pasteEquations} from '../mathPastePlugin';
 import {clearTextFormatting,formatChecklist,formatList,formatParagraph,formatText} from '../writingCommands';
 import {writingRemark,underlineMark,highlightMark,textStyleMark} from '../writingMarks';
-import {headingLayoutSchema,paragraphLayoutSchema} from '../writingLayout';
+import {writingLayoutSchema} from '../writingLayout';
 import type {Alignment,TextStyle} from '../writingStyles';
 import {PAGE_FONTS,pageStyle,wordCount} from '../writing';
 import {FloatingWritingTools} from './WritingTools';
@@ -79,11 +79,30 @@ const HOVER_DELAY_MS = 400;
 interface Preview { target: string; left: number; top: number }
 interface Picker { x: number; y: number; from: number; query: string; sel: number }
 
+function createEditor() {
+  return new Crepe({
+    features: { [Crepe.Feature.BlockEdit]: false, [Crepe.Feature.Toolbar]: false },
+    featureConfigs: {
+      [Crepe.Feature.ImageBlock]: { onUpload: async (file: File) => (await api.upload(file)).url },
+      [Crepe.Feature.Placeholder]: { text: 'Start writing…', mode: 'block' },
+    },
+  });
+}
+
+let preparedEditor: Crepe | undefined;
+
+/** Starts loading Crepe's features without opening or saving any note. */
+export function preloadEditor() {
+  preparedEditor ??= createEditor();
+}
+
 // Block editor (slash menu, drag handles, tables, code, images) with Obsidian-style [[links]].
 export function Editor({ path, initial, attachments, notes, onChange, onOpenLink, handleRef, onEquationRequest, onInsertRequest, autoFocus = false, onReady,documentStyle={},onWordCount }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const crepeRef = useRef<Crepe | null>(null);
   const toolbar = useRef<HTMLDivElement>(null);
+  const [editorFailed, setEditorFailed] = useState(false);
+  const [editorAttempt, setEditorAttempt] = useState(0);
   const [formattingPopup, setFormattingPopup] = useState<FormattingPopup | null>(null);
   const [clipboardMessage, setClipboardMessage] = useState('');
   const clipboardBusy = useRef(false);
@@ -99,6 +118,8 @@ export function Editor({ path, initial, attachments, notes, onChange, onOpenLink
   const requestInsertRef = useRef<(kind: InsertKind, position?: number) => boolean>(() => false);
   const changeRef = useRef(onChange);
   changeRef.current = onChange;
+  const openLinkRef = useRef(onOpenLink);
+  openLinkRef.current = onOpenLink;
   const countRef=useRef(onWordCount);countRef.current=onWordCount;
   const [picker, setPicker] = useState<Picker | null>(null);
   const pickerRef = useRef<Picker | null>(null);
@@ -154,33 +175,37 @@ export function Editor({ path, initial, attachments, notes, onChange, onOpenLink
   };
 
   useEffect(() => {
-    if (!host.current) return;
-    const crepe = new Crepe({
-      root: host.current,
-      defaultValue: toEditor(initial, attachmentsRef.current),
-      features: { [Crepe.Feature.BlockEdit]: false, [Crepe.Feature.Toolbar]: false },
-      featureConfigs: {
-        [Crepe.Feature.ImageBlock]: { onUpload: async (file: File) => (await api.upload(file)).url },
-        [Crepe.Feature.Placeholder]: { text: "Start writing…", mode: 'block' },
-      },
-    });
+    const root = host.current;
+    if (!root) return;
+    const crepe = preparedEditor ?? createEditor();
+    preparedEditor = undefined;
+    const focusOrigin = document.activeElement;
     // Bullets are written as "- " and rules as "---" like Obsidian does, not the serializer's default "* " and "***".
     crepe.editor.config(ctx => {
+      ctx.set(rootCtx, root);
+      ctx.set(defaultValueCtx, toEditor(initial, attachmentsRef.current));
       ctx.update(remarkStringifyOptionsCtx, o => ({ ...o, bullet: '-' as const, rule: '-' as const }));
       ctx.update(editorViewOptionsCtx, previous => ({...previous,handlePaste:(view,event,slice)=>
         pasteEquations(view,event,slice,markdown=>ctx.get(parserCtx)(markdown)) || previous.handlePaste?.(view,event,slice) || false}));
     })
       .use(writingRemark).use(underlineMark).use(highlightMark).use(textStyleMark)
-      .use(paragraphLayoutSchema).use(headingLayoutSchema)
+      .use(writingLayoutSchema)
       .use(quickFormattingPlugin(setFormattingPopup, () => toolbar.current))
-      .use(findHighlightsPlugin).use(calloutPlugin).use(footnotePlugin).use(inlineCanvasPlugin(() => ({notes: notesRef.current, openNote: (target, newTab) => onOpenLink(target, newTab)}))).use(embedPlugin).use(audioPlugin(() => attachmentsRef.current)).use(pdfPlugin(() => attachmentsRef.current));
+      .use(findHighlightsPlugin).use(calloutPlugin).use(footnotePlugin).use(inlineCanvasPlugin(() => ({notes: notesRef.current, openNote: (target, newTab) => openLinkRef.current(target, newTab)}))).use(embedPlugin).use(audioPlugin(() => attachmentsRef.current)).use(pdfPlugin(() => attachmentsRef.current));
     const mathLines = singleLineMath(initial);
     let alive = true;
     crepe.create().then(() => {
       if (!alive) return;
       crepeRef.current = crepe;
       const originalDoc=crepe.editor.action(ctx=>ctx.get(editorViewCtx).state.doc);
-      const originalMarkdown=crepe.editor.action(ctx=>fromEditor(ctx.get(serializerCtx)(originalDoc),attachmentsRef.current,mathLines));
+      let originalMarkdown: string | undefined;
+      const readMarkdown = () => crepe.editor.action(ctx => {
+        const {doc} = ctx.get(editorViewCtx).state;
+        if (doc.eq(originalDoc)) return initial;
+        const serialize = ctx.get(serializerCtx);
+        originalMarkdown ??= fromEditor(serialize(originalDoc), attachmentsRef.current, mathLines);
+        return noteMarkdown(doc, originalDoc, initial, serialize, attachmentsRef.current, mathLines, originalMarkdown);
+      });
       requestEquationRef.current = position => {
         if (!alive || crepeRef.current !== crepe || !equationCallback.current) return false;
         const request = crepe.editor.action(ctx => createEquationRequest(ctx.get(editorViewCtx), path, () => alive && crepeRef.current === crepe, position));
@@ -243,10 +268,7 @@ export function Editor({ path, initial, attachments, notes, onChange, onOpenLink
           requestEquation: () => alive && requestEquationRef.current(),
           requestInsert: kind => alive && requestInsertRef.current(kind),
           format: action => formatRef.current(action),
-          readMarkdown: () => alive ? crepe.editor.action(ctx => {
-            const view = ctx.get(editorViewCtx);
-            return noteMarkdown(view.state.doc,originalDoc,initial,ctx.get(serializerCtx),attachmentsRef.current,mathLines,originalMarkdown);
-          }) ?? null : null,
+          readMarkdown: () => alive ? readMarkdown() ?? null : null,
           findText: (query, direction) => alive ? crepe.editor.action(ctx => {
             const view = ctx.get(editorViewCtx), { doc, selection } = view.state;
             const matches = findInDocument(doc, query);
@@ -269,17 +291,29 @@ export function Editor({ path, initial, attachments, notes, onChange, onOpenLink
           },
         };
       }
-      crepe.on(l => l.markdownUpdated((ctx) => {
-        if (alive && Date.now() > quiet.current) {const md=noteMarkdown(ctx.get(editorViewCtx).state.doc,originalDoc,initial,ctx.get(serializerCtx),attachmentsRef.current,mathLines,originalMarkdown);changeRef.current(md);countRef.current?.(wordCount(md));}
+      crepe.on(l => l.updated(() => {
+        if (alive && Date.now() > quiet.current) {
+          const md = readMarkdown();
+          if (md !== undefined) { changeRef.current(md); countRef.current?.(wordCount(md)); }
+        }
       }));
-      if (focusOnReady.current && !document.querySelector('[aria-modal="true"], .palette') && !document.activeElement?.closest('input, textarea, select')) {
+      const active = document.activeElement;
+      if (focusOnReady.current && (active === focusOrigin || active === document.body) &&
+          !document.querySelector('[aria-modal="true"], .palette') && !active?.closest('input, textarea, select')) {
         crepe.editor.action(ctx => ctx.get(editorViewCtx).focus());
       }
       countRef.current?.(wordCount(initial));
       readyCallback.current?.();
+      // Keep one editor prepared for the next page. Its document is bound only on mount.
+      preloadEditor();
+    }).catch(error => {
+      if (alive) {
+        console.error('Cortex could not initialize the editor', error);
+        setEditorFailed(true);
+      }
     });
-    return () => { alive = false; crepeRef.current = null; formatRef.current = () => false; if (handleRef) handleRef.current = null; crepe.destroy(); };
-  }, [path]);
+    return () => { alive = false; crepeRef.current = null; formatRef.current = () => false; if (handleRef) handleRef.current = null; void crepe.destroy().catch(() => {}); };
+  }, [path, editorAttempt]);
 
   const matches = picker
     ? notesRef.current.filter(n => n.title.toLowerCase().includes(picker.query.toLowerCase())).slice(0, 8)
@@ -422,6 +456,10 @@ export function Editor({ path, initial, attachments, notes, onChange, onOpenLink
   return (
     <div style={{fontFamily:PAGE_FONTS[style.font]||undefined,'--editor-font-size':style.size?`${style.size}px`:undefined} as React.CSSProperties} className="editor-host" onDoubleClickCapture={onDoubleClickCapture} onKeyUp={onKeyUp} onInput={onKeyUp} onKeyDownCapture={onKeyDownCapture} onClickCapture={onClickCapture} onAuxClick={onAuxClick} onMouseDownCapture={onMouseDownCapture} onMouseOver={onMouseOver} onMouseOut={onMouseOut} onKeyDown={() => hidePreview()}>
       <div ref={host} />
+      {editorFailed && <p role="alert">This page could not open. <button className="btn ghost small" onClick={() => {
+        setEditorFailed(false);
+        setEditorAttempt(attempt => attempt + 1);
+      }}>Retry editor</button></p>}
       {formattingPopup && <FloatingWritingTools popup={formattingPopup} toolbar={toolbar} format={action => formatRef.current(action)} clipboard={clipboard}/>}
       {clipboardMessage && <div className="editor-clipboard-feedback" role="status">{clipboardMessage}</div>}
       {preview && (

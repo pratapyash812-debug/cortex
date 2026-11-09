@@ -32,6 +32,9 @@ class NotebookTests(unittest.TestCase):
     def test_add_promotes_and_puts_extra_sheets_in_a_same_named_subfolder(self):
         added = self.v.add_sheet("International Economics.md")
         self.assertEqual(added["created"], "International Economics/Page 2.md")
+        self.assertEqual(added["note"]["path"], added["created"])
+        self.assertEqual(added["note"]["content"], "")
+        self.assertTrue(added["note"]["revision"])
         self.assertTrue(added["isNotebook"])
         self.assertTrue((Path(self.tmp.name) / "International Economics" / "Page 2.md").is_file())
         # a second sheet can be added from a member, not only the primary

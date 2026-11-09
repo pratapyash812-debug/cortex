@@ -1405,7 +1405,7 @@ class Vault:
             data[primary] = extras + [self.rel(p)]
             self._write_notebooks(data)
             view = self._notebook_view(primary, data)
-            return {"created": self.rel(p), **view}
+            return {"created": self.rel(p), "note": self.info(p, with_body=True), **view}
 
     def _write_new(self, folder: str, title: str) -> Path:
         p = self.unique(folder, title)

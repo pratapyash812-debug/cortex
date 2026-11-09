@@ -35,28 +35,47 @@ export function quickFormattingPlugin(
       let context: {anchor: FormattingAnchor; selection: Selection} | null = null;
       let last = view.state;
       let formatting = readFormatting(last);
+      let selectedAnchor: {selection: Selection; rect: FormattingAnchor} | null = null;
+      let lastPopup: FormattingPopup | null = null;
+
+      const hide = () => {
+        if (lastPopup) show(null);
+        lastPopup = null;
+        selectedAnchor = null;
+      };
 
       const showAt = (anchor: FormattingAnchor, minTop: number, maxBottom: number, contextMenu: boolean) => {
         if (last !== view.state) {
           formatting = readFormatting(view.state);
           last = view.state;
         }
-        show({anchor, minTop, maxBottom, contextMenu, formatting});
+        const previous = lastPopup;
+        if (previous?.anchor === anchor && previous.minTop === minTop && previous.maxBottom === maxBottom &&
+            previous.contextMenu === contextMenu && previous.formatting === formatting) return;
+        lastPopup = {anchor, minTop, maxBottom, contextMenu, formatting};
+        show(lastPopup);
       };
 
       const dismiss = () => {
         dismissed = view.state.selection;
         context = null;
-        show(null);
+        hide();
       };
       const schedule = () => {
         if (frame) return;
         frame = win.requestAnimationFrame(() => {
           frame = 0;
           const {selection} = view.state;
-          if (!view.dom.isConnected || !view.editable || dragging || dismissed?.eq(selection) ||
+          if (!view.dom.isConnected || !view.editable || view.composing || dragging || dismissed?.eq(selection) ||
               (!view.hasFocus() && !popup()?.contains(doc.activeElement))) {
-            show(null);
+            hide();
+            return;
+          }
+          const atContext = context?.selection.eq(selection) ? context : null;
+          if (!atContext) context = null;
+          if (!atContext && (!(selection instanceof TextSelection) || selection.empty ||
+              selection.$from.parent.type.spec.code || !view.state.doc.textBetween(selection.from, selection.to).trim())) {
+            hide();
             return;
           }
           const scroller = view.dom.closest('.lean-document');
@@ -64,20 +83,23 @@ export function quickFormattingPlugin(
           const visibleTop = Math.max(0, bounds?.top ?? 0,
             scroller?.querySelector('.document-toolbar')?.getBoundingClientRect().bottom ?? 0);
           const visibleBottom = Math.min(win.innerHeight, bounds?.bottom ?? win.innerHeight);
-          if (context?.selection.eq(selection)) {
-            showAt(context.anchor, visibleTop, visibleBottom, true);
+          if (atContext) {
+            showAt(atContext.anchor, visibleTop, visibleBottom, true);
             return;
           }
-          context = null;
-          if (!(selection instanceof TextSelection) || selection.empty || selection.$from.parent.type.spec.code ||
-              !view.state.doc.textBetween(selection.from, selection.to).trim()) {
-            show(null);
+          // Updating a style can move the text. Keep the controls under the pointer
+          // until the selection, scroll position, or viewport actually changes.
+          if (selectedAnchor?.selection.eq(selection) && popup()) {
+            showAt(selectedAnchor.rect, visibleTop, visibleBottom, false);
             return;
           }
           const rect = [view.coordsAtPos(selection.from), view.coordsAtPos(selection.head)]
             .find(candidate => candidate.bottom > visibleTop && candidate.top < visibleBottom);
-          if (rect) showAt({x: rect.left, top: rect.top, bottom: rect.bottom}, visibleTop, visibleBottom, false);
-          else show(null);
+          if (rect) {
+            const anchor = {x: rect.left, top: rect.top, bottom: rect.bottom};
+            selectedAnchor = {selection, rect: anchor};
+            showAt(anchor, visibleTop, visibleBottom, false);
+          } else hide();
         });
       };
 
@@ -90,7 +112,7 @@ export function quickFormattingPlugin(
           dismissed = null;
           context = null;
           dragging = true;
-          show(null);
+          hide();
         }
       }, {...options, capture: true});
       const finishDrag = () => {
@@ -102,8 +124,9 @@ export function quickFormattingPlugin(
       doc.addEventListener('pointercancel', finishDrag, options);
       doc.addEventListener('focusin', schedule, options);
       doc.addEventListener('focusout', schedule, options);
-      doc.addEventListener('scroll', () => context ? dismiss() : schedule(), {...options, capture: true, passive: true});
-      win.addEventListener('resize', schedule, options);
+      const reposition = () => { selectedAnchor = null; schedule(); };
+      doc.addEventListener('scroll', () => context ? dismiss() : reposition(), {...options, capture: true, passive: true});
+      win.addEventListener('resize', reposition, options);
       win.addEventListener('blur', dismiss, options);
       view.dom.addEventListener('beforeinput', dismiss, options);
 
@@ -113,6 +136,7 @@ export function quickFormattingPlugin(
           view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, pos)));
         }
         context = {anchor, selection: view.state.selection};
+        selectedAnchor = null;
         dismissed = null;
         dragging = false;
         view.focus();

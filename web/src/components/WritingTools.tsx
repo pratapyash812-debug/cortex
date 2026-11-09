@@ -96,17 +96,23 @@ export function FloatingWritingTools({popup, toolbar, format, clipboard}: {
   useLayoutEffect(() => {
     const element = toolbar.current;
     if (!element) return;
-    const gap = 8;
-    const height = element.offsetHeight;
-    const above = anchor.top - height - gap;
-    const below = anchor.bottom + gap;
-    const left = Math.max(gap, Math.min(anchor.x, window.innerWidth - element.offsetWidth - gap));
-    const fitsAbove = above >= minTop + gap;
-    const fitsBelow = below + height + gap <= maxBottom;
-    const preferred = fitsAbove && (!contextMenu || !fitsBelow) ? above : below;
-    const top = Math.max(gap, Math.min(preferred, window.innerHeight - height - gap));
-    element.style.left = `${left}px`;
-    element.style.top = `${top}px`;
+    const position = () => {
+      const gap = 8;
+      const height = element.offsetHeight;
+      const above = anchor.top - height - gap;
+      const below = anchor.bottom + gap;
+      const left = Math.max(gap, Math.min(anchor.x, window.innerWidth - element.offsetWidth - gap));
+      const fitsAbove = above >= minTop + gap;
+      const fitsBelow = below + height + gap <= maxBottom;
+      const preferred = fitsAbove && (!contextMenu || !fitsBelow) ? above : below;
+      const top = Math.max(gap, Math.min(preferred, window.innerHeight - height - gap));
+      element.style.left = `${left}px`;
+      element.style.top = `${top}px`;
+    };
+    position();
+    const resize = new ResizeObserver(position);
+    resize.observe(element);
+    return () => resize.disconnect();
   }, [anchor, minTop, maxBottom, contextMenu, toolbar]);
   return createPortal(
     <div ref={toolbar} className="floating-writing-tools" role="toolbar" aria-label="Quick formatting"
@@ -120,7 +126,7 @@ export function FloatingWritingTools({popup, toolbar, format, clipboard}: {
       </div>
       <div className="floating-writing-row">
         <ParagraphChoices format={format} value={formatting.block}/>
-        {formatButtons(emphasis.slice(0, 5), format, formatting)}
+        {formatButtons(emphasis, format, formatting)}
         {formatButtons(lists.slice(0, 3), format, formatting)}
         {formatButtons(selectionTools, format, formatting)}
       </div>

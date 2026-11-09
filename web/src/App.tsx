@@ -17,8 +17,10 @@ import {noteNavigation,openedNoteScope} from './navigation';
 import {firstSubjectPage,subjectPageDestination,subjectPages} from './subjectPages';
 import {notebookLibrary,type LibraryNotebook} from './notebookLibrary';
 import {NotebookLibrary} from './components/NotebookLibrary';
+import {loadStartupPage} from './startupPage';
 const PdfView=lazy(()=>import('./components/PdfView').then(m=>({default:m.PdfView})));
-const Editor=lazy(()=>import('./components/Editor').then(m=>({default:m.Editor})));
+const loadEditor=()=>import('./components/Editor');
+const Editor=lazy(()=>loadEditor().then(m=>({default:m.Editor})));
 const EquationComposer=lazy(()=>import('./components/EquationComposer').then(m=>({default:m.EquationComposer})));
 const TableDialog=lazy(()=>import('./components/InsertDialog').then(m=>({default:m.TableDialog})));
 const FigureDialog=lazy(()=>import('./components/InsertDialog').then(m=>({default:m.FigureDialog})));
@@ -42,6 +44,8 @@ export default function App(){
   const [pdfReader,setPdfReader]=useState<DocumentHit|null>(null);
   const [equation,setEquation]=useState<EquationRequest|null>(null),[insertion,setInsertion]=useState<InsertRequest|null>(null),[legacyCanvas,setLegacyCanvas]=useState<string|null>(null);
   const newNoteStarted=useRef(0);
+  const firstEditorReady=useRef(false);
+  const [starting,setStarting]=useState(true);
   const [words,setWords]=useState(0);
   const [name,setName]=useState(''),[busy,setBusy]=useState(false),[focusPath,setFocusPath]=useState('');
   const documentRef=useRef<HTMLDivElement>(null);
@@ -50,6 +54,10 @@ export default function App(){
   const session=useNoteSession(info=>{setNotes(list=>list.map(n=>n.path===info.path?{...n,...info}:n));window.dispatchEvent(new Event('cortex-data-changed'));},fail);
   const note=session.note,nav=useRef(0),creating=useRef(false),restored=useRef(false),sketching=useRef(false);
   const flushSavedWork=async()=>{await session.flush();await flushOtherSaves();};
+  const settlePage=async()=>{
+    // A save can finish after the user has already typed another character.
+    while(session.unsaved()||session.hasPendingWrites())await session.flush();
+  };
   const navigation=useMemo(()=>noteNavigation(notes,notebooks),[notes,notebooks]);
   const library=useMemo(()=>notebookLibrary(navigation,folders),[navigation,folders]);
   useEffect(()=>{documentRef.current?.scrollTo({top:0});},[note?.path,pdfReader?.path]);
@@ -57,22 +65,60 @@ export default function App(){
   const refresh=async()=>{const t=await api.tree();setNotes(t.notes);setFolders(t.folders);setCanvases(t.canvases);setNotebooks(t.notebooks);setVault(t.vault);return t;};
   const remember=(path:string)=>{stateQueue.current=stateQueue.current.catch(()=>{}).then(()=>api.saveState({tabs:[{id:'note',kind:'note',path}],active:'note',split:null})).catch(fail);};
   const open=async(path:string,keepNavigation=false)=>{
+    if(creating.current)return;
     const request=++nav.current;
     try{await session.flush();if(request!==nav.current)return;if(path.endsWith('.canvas')){setLegacyCanvas(path);return;}
-      const n=await api.note(path);if(request!==nav.current)return;session.load(n);setScope(openedNoteScope(navigation,n));setPdfReader(null);setFind(false);setLegacyCanvas(null);remember(path);if(innerWidth<900&&!keepNavigation)setSidebar(false);
+      const priorContent=session.contentRef.current;
+      const n=await api.note(path);if(request!==nav.current)return;
+      // If this is a reload of the current page, keep any typing that happened during the read.
+      if(session.noteRef.current?.path===path&&(session.unsaved()||session.hasPendingWrites()||session.contentRef.current!==priorContent))return;
+      await settlePage();if(request!==nav.current)return;
+      newNoteStarted.current=0;session.load(n);setFocusPath(n.path);setScope(openedNoteScope(navigation,n));setPdfReader(null);setFind(false);setLegacyCanvas(null);remember(path);if(innerWidth<900&&!keepNavigation)setSidebar(false);
     }catch(e){fail(e);}
   };
-  const openPdf=async(hit:DocumentHit)=>{const request=++nav.current;try{await session.flush();if(request===nav.current){setPdfReader(hit);setFind(false);if(innerWidth<900)setSidebar(false);}}catch(e){fail(e);}};
+  const openPdf=async(hit:DocumentHit)=>{if(creating.current)return;const request=++nav.current;try{await session.flush();if(request===nav.current){setPdfReader(hit);setFind(false);if(innerWidth<900)setSidebar(false);}}catch(e){fail(e);}};
   const sync=useSync(paths=>{void refresh().catch(fail);if(session.noteRef.current&&paths.includes(session.noteRef.current.path))setNotice('Sync updated this note. Reopen after saving to load the other version.');});
   useEffect(()=>{
     let live=true;
-    void(async()=>{try{
-      const [tree,saved,state]=await Promise.all([api.tree(),api.settings(),api.state()]);if(!live)return;
-      setNotes(tree.notes);setFolders(tree.folders);setCanvases(tree.canvases);setNotebooks(tree.notebooks);setVault(tree.vault);setSettings(saved.settings);applySettings(saved.settings);
-      const tab=state.tabs?.find(t=>t.id===state.active&&t.kind==='note')??state.tabs?.find(t=>t.kind==='note');
-      if(tab?.path&&tree.notes.some(n=>n.path===tab.path)){const n=await api.note(tab.path);if(live&&nav.current===0){session.load(n);setScope(noteNavigation(tree.notes,tree.notebooks).subject(n.path));if(innerWidth<900)setSidebar(false);}}
-      const r=await fetch('/api/recovery?limit=1').then(r=>r.json());if(live&&r.total)setNotice('Saved drafts are available in Recovery.');
-    }catch(e){if(live)fail(e);}finally{if(live)restored.current=true;}})();return()=>{live=false;};
+    const stillStarting=()=>live&&nav.current===0;
+    void loadEditor().then(module=>{if(live)module.preloadEditor();}).catch(()=>{});
+    const state=api.state();
+    let startupNavigation:ReturnType<typeof noteNavigation>|undefined;
+    let starterCreated=false;
+    const tree=api.tree().then(tree=>{
+      if(live){
+        startupNavigation=noteNavigation(tree.notes,tree.notebooks);
+        setNotes(tree.notes);setFolders(tree.folders);setCanvases(tree.canvases);setNotebooks(tree.notebooks);setVault(tree.vault);
+        if(stillStarting()&&session.noteRef.current)setScope(openedNoteScope(startupNavigation,session.noteRef.current));
+      }
+      return tree;
+    });
+    void api.settings().then(saved=>{
+      if(live){setSettings(saved.settings);applySettings(saved.settings);}
+    }).catch(e=>{if(live)fail(e);});
+    const initialPage=loadStartupPage(state,tree,api.note,async()=>{
+      const first=await api.create('','Untitled');
+      starterCreated=true;
+      return first;
+    },stillStarting).then(page=>{
+      if(!page||!stillStarting())return;
+      session.load(page);
+      setScope(startupNavigation?openedNoteScope(startupNavigation,page):page.folder.split('/')[0]);
+      setFocusPath(page.path);
+      if(starterCreated)setNotes(list=>[page,...list]);
+      remember(page.path);
+      if(innerWidth<900)setSidebar(false);
+    });
+    void Promise.allSettled([tree,initialPage]).then(results=>{
+      if(!live)return;
+      restored.current=true;setStarting(false);
+      const failure=results.find(result=>result.status==='rejected');
+      if(failure)fail(failure.reason);
+      void fetch('/api/recovery?limit=1').then(r=>r.json()).then(r=>{
+        if(live&&r.total)setNotice('Saved drafts are available in Recovery.');
+      }).catch(()=>{});
+    });
+    return()=>{live=false;};
     // Restore once; navigation owns subsequent editor loads.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[]);
@@ -90,7 +136,22 @@ export default function App(){
   useEffect(()=>{if(!query.trim()){setHits(null);return;}let live=true;const timer=setTimeout(()=>void Promise.all([api.search(query),api.documentSearch(query).catch(e=>({available:false,running:false,totalFiles:0,indexedFiles:0,indexedPages:0,complete:false,indexingComplete:false,noOCR:true,hits:[],error:String(e)}))]).then(([found,documents])=>{if(live)setHits({query,notes:found,documents});}).catch(fail),180);return()=>{live=false;clearTimeout(timer);};},[query,notes]);
   const newNote=async()=>{
     if(creating.current||!restored.current)return;creating.current=true;newNoteStarted.current=performance.now();setBusy(true);
-    try{await session.flush();nav.current++;const destination=subjectPageDestination(navigation,scope);let n;if(destination.notebook){const group=await api.addSheet(destination.notebook,'Untitled');n=await api.note(group.created);setNotebooks(previous=>({...previous,[group.primary]:group.sheets.slice(1).map(sheet=>sheet.path)}));}else n=await api.create(destination.folder,'Untitled','');session.load(n);setPdfReader(null);setFocusPath(n.path);setLegacyCanvas(null);setDialog(null);setQuery('');setNotes(list=>[n,...list]);remember(n.path);if(innerWidth<900)setSidebar(false);}
+    nav.current++;
+    try{
+      await session.flush();
+      const destination=subjectPageDestination(navigation,scope);
+      let n;
+      if(destination.notebook){
+        const group=await api.addSheet(destination.notebook,'Untitled');
+        n=group.note??await api.note(group.created);
+        setNotebooks(previous=>({...previous,[group.primary]:group.sheets.slice(1).map(sheet=>sheet.path)}));
+      }else n=await api.create(destination.folder,'Untitled');
+      setNotes(list=>[n,...list]);
+      // Include any text typed in the previous note while creation was in flight.
+      await settlePage();
+      session.load(n);setPdfReader(null);setFocusPath(n.path);setLegacyCanvas(null);setDialog(null);setQuery('');remember(n.path);
+      if(innerWidth<900)setSidebar(false);
+    }
     catch(e){fail(e);}finally{creating.current=false;setBusy(false);}
   };
   useEffect(()=>{
@@ -114,6 +175,7 @@ export default function App(){
   const foundNotes=hits?.query===query?hits.notes:[];
   const pdfHits=hits?.query===query?hits.documents.hits:[];
   const selectNotebook=(book:LibraryNotebook|null)=>{
+    if(creating.current)return;
     setQuery('');
     if(!book){nav.current++;setScope('');return;}
     const current=session.noteRef.current;
@@ -123,6 +185,16 @@ export default function App(){
   };
   const insert=(k:InsertKind)=>session.editorRef.current?.requestInsert(k);
   const dismissMenu=(e:React.MouseEvent<HTMLElement>)=>e.currentTarget.closest('details')?.removeAttribute('open');
+  const editorReady=(path:string)=>{
+    if(!firstEditorReady.current){
+      firstEditorReady.current=true;
+      document.documentElement.dataset.cortexFirstEditorMs=String(Math.round(performance.now()));
+    }
+    if(focusPath!==path)return;
+    if(newNoteStarted.current)document.documentElement.dataset.cortexNewNoteMs=String(Math.round(performance.now()-newNoteStarted.current));
+    newNoteStarted.current=0;
+    setFocusPath('');
+  };
   return <div className="lean-app">
     {sidebar&&<div className="notebook-navigation" aria-label="Notebook navigation">
       <aside className="lean-sidebar" aria-label="Subjects navigation"><header><div className="library-brand"><strong>Cortex</strong></div><button className="icon" aria-label="Hide notes" onClick={()=>setSidebar(false)}>×</button></header>
@@ -130,15 +202,15 @@ export default function App(){
         <div className="lean-note-list"><NotebookLibrary notebooks={library} scope={scope} total={subjectPages(navigation,'').length} onSelect={selectNotebook} onCreate={()=>begin('folder')}/></div>
         <footer><button onClick={()=>setDialog('import')}>Import folder or files</button><button className="icon" aria-label="Settings" onClick={()=>setDialog('settings')}><Gear size={16}/></button></footer>
       </aside>
-      {query.trim()?<section className="subject-pages search-results" aria-label="Search results"><header><h2>Search results</h2><button className="icon" aria-label="Close search" onClick={()=>setQuery('')}>×</button></header><div className="subject-results-scroll"><p className="muted small">{hits?.query===query?'Notes · entire library':'Searching…'}</p>{foundNotes.map(n=><button className="lean-note" key={n.path} onClick={()=>void open(n.path)}><strong>{n.title}</strong><span>{navigation.trail(n.path).slice(0,-1).map(n=>n.title).join(' › ')}</span></button>)}{hits?.query===query&&<><p className="muted small">PDF pages · {hits.documents.indexedFiles}/{hits.documents.totalFiles} files checked</p>{pdfHits.map(h=><button className="lean-note" key={`${h.path}:${h.page}`} onClick={()=>void openPdf(h)}><strong>{h.title} · p. {h.page}</strong><span>{h.snippet}</span></button>)}{!foundNotes.length&&!pdfHits.length&&<p className="muted small">No matches yet.</p>}<p className="muted small">{hits.documents.error?'PDF search is currently unavailable.':hits.documents.indexingComplete?'Image-only PDF pages need selectable text before they can be searched.':'PDF text is being indexed while the app is idle; results may be incomplete.'}</p></>}</div></section>:<SubjectPages key={scope} navigation={navigation} subject={scope} current={pdfReader?'':note?.path??''} busy={busy} onOpen={path=>void open(path)} onAdd={()=>void newNote()}/>}
+      {query.trim()?<section className="subject-pages search-results" aria-label="Search results"><header><h2>Search results</h2><button className="icon" aria-label="Close search" onClick={()=>setQuery('')}>×</button></header><div className="subject-results-scroll"><p className="muted small">{hits?.query===query?'Notes · entire library':'Searching…'}</p>{foundNotes.map(n=><button className="lean-note" key={n.path} onClick={()=>void open(n.path)}><strong>{n.title}</strong><span>{navigation.trail(n.path).slice(0,-1).map(n=>n.title).join(' › ')}</span></button>)}{hits?.query===query&&<><p className="muted small">PDF pages · {hits.documents.indexedFiles}/{hits.documents.totalFiles} files checked</p>{pdfHits.map(h=><button className="lean-note" key={`${h.path}:${h.page}`} onClick={()=>void openPdf(h)}><strong>{h.title} · p. {h.page}</strong><span>{h.snippet}</span></button>)}{!foundNotes.length&&!pdfHits.length&&<p className="muted small">No matches yet.</p>}<p className="muted small">{hits.documents.error?'PDF search is currently unavailable.':hits.documents.indexingComplete?'Image-only PDF pages need selectable text before they can be searched.':'PDF text is being indexed while the app is idle; results may be incomplete.'}</p></>}</div></section>:<SubjectPages key={scope} navigation={navigation} subject={scope} current={pdfReader?'':note?.path??''} busy={busy||starting} onOpen={path=>void open(path)} onAdd={()=>void newNote()}/>}
     </div>}
-    <main className="lean-main"><header className="lean-topbar"><button className="icon" aria-label="Show notes" onClick={()=>setSidebar(v=>!v)}><Menu size={18}/></button><nav className="note-breadcrumbs grow" aria-label="Note location">{pdfReader?<><button onClick={()=>note?void open(note.path):setPdfReader(null)}>← Back to note</button><span>{pdfReader.title}</span></>:<><span>Notes</span>{note&&<span> / {navigation.subject(note.path)||'Unfiled'} / {note.title}</span>}</>}</nav>{note&&<span className={`note-save-state ${session.saveStatus}`} role="status">{session.saveStatus==='saved'?'Saved':session.saveStatus==='saving'?'Saving…':'Not saved — keep this window open'}</span>}<button className="btn ghost small topbar-new-note" disabled={busy} onClick={()=>void newNote()}><Plus size={16}/> New page</button></header>
+    <main className="lean-main"><header className="lean-topbar"><button className="icon" aria-label="Show notes" onClick={()=>setSidebar(v=>!v)}><Menu size={18}/></button><nav className="note-breadcrumbs grow" aria-label="Note location">{pdfReader?<><button onClick={()=>note?void open(note.path):setPdfReader(null)}>← Back to note</button><span>{pdfReader.title}</span></>:<><span>Notes</span>{note&&<span> / {navigation.subject(note.path)||'Unfiled'} / {note.title}</span>}</>}</nav>{note&&<span className={`note-save-state ${session.saveStatus}`} role="status">{session.saveStatus==='saved'?'Saved':session.saveStatus==='saving'?'Saving…':'Not saved — keep this window open'}</span>}<button className="btn ghost small topbar-new-note" disabled={busy||starting} onClick={()=>void newNote()}><Plus size={16}/> New page</button></header>
       {error&&<div className="error lean-notice" role="alert">{error} <button onClick={()=>setDialog('recovery')}>Recovery</button><button aria-label="Dismiss error" onClick={()=>setError('')}>×</button></div>}{notice&&<div className="lean-notice" role="status">{notice}<button aria-label="Dismiss notice" onClick={()=>setNotice('')}>×</button></div>}
       <div className="lean-document" ref={documentRef}>{pdfReader?<Suspense fallback={<p role="status">Opening PDF…</p>}><div className="standalone-pdf"><h1>{pdfReader.title}</h1><PdfView key={`${pdfReader.path}:${pdfReader.page}`} path={pdfReader.path} url={'/files/'+pdfReader.path.split('/').map(encodeURIComponent).join('/')} initialPage={pdfReader.page} initialQuery={query} standalone/></div></Suspense>:note?<><div className="document-kind">Page</div><div className="lean-title"><button title="Rename note" onClick={()=>begin('rename')}>{note.title}</button><button className="icon" aria-label={note.pinned?'Unpin note':'Pin note'} aria-pressed={note.pinned} onClick={()=>action(()=>session.setMeta({pinned:!note.pinned}))}><Pin size={16}/></button></div>
         <div className="document-toolbar" role="toolbar" aria-label="Formatting"><WritingTools key={note.path} format={key=>session.editorRef.current?.format(key)} meta={note.meta} onStyle={style=>session.setMeta({documentStyle:style})} onError={fail}/>
           <button className="btn ghost small" onClick={()=>session.editorRef.current?.requestEquation()}><Sigma size={16}/> Equation</button><details className="lean-menu"><summary>Insert</summary><div>{(['table','figure','image'] as const).map(k=><button key={k} onClick={e=>{insert(k);dismissMenu(e);}}>{k==='figure'?'Graph / chart':k==='table'?'Table':'Image'}</button>)}<button onClick={e=>{void sketch();dismissMenu(e);}}>Sketch</button><label>Attachment<input type="file" hidden onChange={e=>{const f=e.target.files?.[0];if(f)void attach(f);e.target.value='';e.currentTarget.closest('details')?.removeAttribute('open');}}/></label></div></details>
           <button className="btn ghost small" title="Find in this note (Ctrl+F)" onClick={()=>setFind(v=>!v)}>Find</button><span className="grow"/><details className="lean-menu"><summary aria-label="Note options"><MoreHorizontal size={18}/></summary><div>{([['details','Sources & links'],['move','Move page'],['history','Version history']] as const).map(([d,label])=><button key={d} disabled={d==='move'&&navigation.children.has(note.path)&&!navigation.parents.has(note.path)} onClick={e=>{begin(d);dismissMenu(e);}}>{label}</button>)}<button onClick={()=>action(async()=>{await flushSavedWork();window.open(`/api/export/html?path=${encodeURIComponent(note.path)}&inline=1&print=1`,'_blank');})}>Export / Print PDF</button><button onClick={()=>action(async()=>{await flushSavedWork();const a=document.createElement('a');a.href=`/api/export/html?path=${encodeURIComponent(note.path)}`;a.click();})}>Export HTML</button><button onClick={()=>action(async()=>{await flushSavedWork();const a=document.createElement('a');a.href=`/api/export/docx?path=${encodeURIComponent(note.path)}`;a.click();})}>Export Word (.docx)</button><button onClick={()=>setDialog('delete')}>Move to Trash</button></div></details></div>
-        {find&&<FindInNote editorRef={session.editorRef} onClose={()=>setFind(false)}/>}<Suspense fallback={<p role="status">Opening note…</p>}><Editor key={`${note.path}:${session.generation}`} path={note.path} initial={note.content} attachments={note.attachments} notes={notes} handleRef={session.editorRef} autoFocus={focusPath===note.path} onReady={()=>{if(focusPath===note.path){document.documentElement.dataset.cortexNewNoteMs=String(Math.round(performance.now()-newNoteStarted.current));setFocusPath('');}}} onChange={md=>session.onChange(note.path,session.generation,md)} onOpenLink={openLink} onEquationRequest={setEquation} onInsertRequest={setInsertion} onCanvasRequest={()=>void sketch()} documentStyle={note.meta} onWordCount={setWords}/></Suspense><footer className="document-status">{words} {words===1?'word':'words'}</footer></>:<div className="empty-main"><h1>{scope||'Your notes'}</h1><p>{scope?'Choose New page to start a document in this subject.':'Choose a subject and a page, or start a new page.'}</p>{!library.length&&<button className="btn ghost" onClick={()=>setDialog('import')}>Import a folder or files</button>}</div>}</div>
+        {find&&<FindInNote editorRef={session.editorRef} onClose={()=>setFind(false)}/>}<Suspense fallback={<p role="status">Opening note…</p>}><Editor key={`${note.path}:${session.generation}`} path={note.path} initial={note.content} attachments={note.attachments} notes={notes} handleRef={session.editorRef} autoFocus={focusPath===note.path} onReady={()=>editorReady(note.path)} onChange={md=>session.onChange(note.path,session.generation,md)} onOpenLink={openLink} onEquationRequest={setEquation} onInsertRequest={setInsertion} onCanvasRequest={()=>void sketch()} documentStyle={note.meta} onWordCount={setWords}/></Suspense><footer className="document-status">{words} {words===1?'word':'words'}</footer></>:starting?<p className="document-status" role="status">Opening your page…</p>:<div className="empty-main"><h1>{scope||'Your notes'}</h1><p>{scope?'Choose New page to start a document in this subject.':'Choose a subject and a page, or start a new page.'}</p>{!library.length&&<button className="btn ghost" onClick={()=>setDialog('import')}>Import a folder or files</button>}</div>}</div>
     </main><Suspense fallback={<div className="lean-loading" role="status">Opening…</div>}>
       {equation&&<EquationComposer initialLatex={equation.initialLatex} initialDisplay={equation.initialDisplay} onApply={(latex,display)=>{equation.apply(latex,display);setEquation(null);}} onClose={()=>setEquation(null)}/>}
       {insertion?.kind==='table'&&<TableDialog onApply={insertion.applyMarkdown} onClose={()=>setInsertion(null)}/>} {insertion?.kind==='figure'&&<FigureDialog id={insertion.figureId} path={insertion.path} onApply={insertion.applyMarkdown} onClose={()=>setInsertion(null)}/>} {insertion?.kind==='image'&&<ImageDialog onApply={insertion.applyMarkdown} onClose={()=>setInsertion(null)}/>}

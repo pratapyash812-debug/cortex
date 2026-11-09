@@ -261,7 +261,7 @@ export const api = {
   createNotebook: (title: string) => call<Note>('POST', '/api/notebook/create', { title }),
   createSection: (path: string, title: string) => call<NotebookView & {created:string}>('POST','/api/notebook/section',{path,title}),
   movePage: (path:string,target:string)=>call<NotebookView>('POST','/api/notebook/move',{path,target}),
-  addSheet: (path: string, title?: string) => call<NotebookView & { created: string }>('POST', '/api/notebook', { path, ...(title ? { title } : {}) }),
+  addSheet: (path: string, title?: string) => call<NotebookView & { created: string; note?: Note }>('POST', '/api/notebook', { path, ...(title ? { title } : {}) }),
   reorderSheets: (primary: string, order: string[]) => call<NotebookView>('POST', '/api/notebook/reorder', { primary, order }),
   removeSheet: (path: string) => call<NotebookView>('DELETE', `/api/notebook/sheet?path=${enc(path)}`),
   note: (path: string) => call<Note>('GET', `/api/note?path=${enc(path)}`),
