@@ -37,6 +37,15 @@ class PdfTextTests(unittest.TestCase):
         finally:restarted.stop()
         self.assertEqual(p.read_bytes(),before)
 
+    def test_scoped_folded_pdf_search_preserves_exact_phrase_and_display_text(self):
+        write_pdf(self.v.root/'Economics/Source.pdf',['Dansk økonomi.','Økonomi på dansk.'])
+        write_pdf(self.v.root/'Economics2/Source.pdf',['Dansk økonomi.'])
+        self.index.index_once()
+        result=self.index.search('"dansk okonomi"',subject='Economics',fold=True)
+        self.assertEqual([(item['path'],item['page']) for item in result['hits']],[('Economics/Source.pdf',1)])
+        self.assertIn('Dansk økonomi.',result['hits'][0]['snippet'])
+        self.assertEqual(result['totalFiles'],1)
+
     def test_worker_resolves_its_siblings_when_the_runtime_omits_the_script_directory(self):
         source=self.root/'Isolated.pdf';write_pdf(source,['Revenue and dækningsbidrag'])
         script=str(Path(pdf_index.__file__).resolve())

@@ -3,7 +3,7 @@
 // becomes [Alias](wiki:Target) and on the way out it turns back into [[...]].
 // Attachments are stored as vault paths and shown through /files/.
 
-const WIKI = /(?<!!)\[\[([^[\]|#`\n]+)(#[^[\]|`\n]*)?(?:\|([^[\]`\n]+))?\]\]/g;
+const WIKI = /(?<!!)\[\[([^[\]|#`\n]*)(#[^[\]|`\n]*)?(?:\|([^[\]`\n]+))?\]\]/g;
 const EDITOR_LINK = /\[([^\]]*)\]\(wiki:([^)\s]+)\)/g;
 const FILE_LINK = /(!?\[[^\]]*\])\(\/files\/([^)\s]+)\)/g;
 const VAULT_ATTACH = /(!?\[[^\]]*\])\((attachments\/[^)\s]+)\)/g;
@@ -40,9 +40,13 @@ export function toEditor(md: string, attachments: Record<string, string> = {}) {
     .replace(SINGLE_LINE_MATH, (_, expr: string) => `$$\n${expr}\n$$`)
     .replace(EMBED, (whole, name: string, alt?: string) => {
       const p = attachments[name.trim()];
-      return p && IMAGE_FILE.test(name.trim()) ? `![${alt ?? name.trim()}](/files/${encodeURI(p)})` : whole;
+      if(!p||!IMAGE_FILE.test(name.trim()))return whole;
+      const ratio=alt && /^(?:\d*\.)?\d+$/.test(alt);
+      const caption=alt&&!ratio?alt.replace(/\\/g,'\\\\').replace(/"/g,'\\"'):'';
+      const src=encodeURI(p).replace(/[()#?]/g,character=>'%'+character.charCodeAt(0).toString(16));
+      return `![${ratio?alt:"1"}](/files/${src}${caption?` "${caption}"`:""})`;
     })
-    .replace(WIKI, (_, target: string, heading = '', alias?: string) => `[${alias ?? target.trim()}](wiki:${encodeURIComponent(target.trim() + heading)})`)
+    .replace(WIKI, (whole, target: string, heading = '', alias?: string) => target.trim() || heading ? `[${alias ?? (target.trim() || heading.slice(1))}](wiki:${encodeURIComponent(target.trim() + heading)})` : whole)
     .replace(VAULT_ATTACH, (_, label, p) => `${label}(/files/${p})`));
 }
 
@@ -53,9 +57,13 @@ export function fromEditor(md: string, attachments: Record<string, string> = {},
     // generated graph is a full SVG attachment, never a one-pixel wiki resize.
     .replace(/!\[[^\]]*\]\(\/files\/(attachments\/figures\/figure-[a-f0-9]{32}\.svg)(?:\s+"[^"]*")?\)/g, (_, path: string) => `![[${path}]]`)
     // Images that came from ![[name]] go back to Obsidian's embed form.
-    .replace(/!\[([^\]]*)\]\(\/files\/([^)\s]+)\)/g, (whole, alt: string, p: string) => {
-      const name = byPath.get(decodeURI(p));
-      return name ? (alt && alt !== name ? `![[${name}|${alt}]]` : `![[${name}]]`) : whole;
+    .replace(/!\[([^\]]*)\]\(\/files\/([^)\s]+)(?:\s+"((?:\\.|[^"\\])*)")?\)/g, (whole, alt: string, p: string, caption?: string) => {
+      let path:string;try{path=decodeURIComponent(p);}catch{return whole;}
+      const name=byPath.get(path);
+      const description=caption?.replace(/\\([\\"])/g,'$1').replace(/[[\]|\r\n]/g,' ').trim();
+      const ratio=alt&&alt!==name&&alt!==path&&Number(alt)!==1?alt:'';
+      const alias=description||ratio;
+      return name ? (alias ? `![[${name}|${alias}]]` : `![[${name}]]`) : whole;
     })
     .replace(/^\$\$\n([^\n$]+)\n\$\$$/gm, (block, expr: string) => mathLines.get(expr) ?? block)
     // The markdown serializer escapes brackets; Obsidian expects them bare.
@@ -71,4 +79,4 @@ export function fromEditor(md: string, attachments: Record<string, string> = {},
   return out.replace(TRAILING_BR, '\n');
 }
 
-export const wikiTarget = (href: string) => decodeURIComponent(href.replace(/^wiki:/, '')).split('#')[0];
+export const wikiTarget = (href: string) => {const value=href.replace(/^wiki:/,'');try{return decodeURIComponent(value);}catch{return value;}};

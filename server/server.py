@@ -16,6 +16,7 @@ import json
 import math
 import mimetypes
 import os
+import plistlib
 import posixpath
 import re
 import shutil
@@ -188,7 +189,13 @@ def clean_strokes(raw) -> list[dict]:
             width = max(0.5, min(40.0, float(s.get("width", 3))))
         except (TypeError, ValueError):
             width = 3.0
-        out.append({"id": str(s.get("id") or f"s{len(out)}")[:64], "color": color, "width": width, "points": points})
+        item = {"id": str(s.get("id") or f"s{len(out)}")[:64], "color": color, "width": width, "points": points}
+        raw_pressure = s.get("pressure")
+        if raw_pressure is not None:
+            if not isinstance(raw_pressure, list) or len(raw_pressure) != len(points) // 2 or any(type(value) not in (int, float) or not 0 <= value <= 1 for value in raw_pressure):
+                raise ValueError("invalid pen pressure samples")
+            item["pressure"] = [round(value, 3) for value in raw_pressure]
+        out.append(item)
     return out
 
 
@@ -202,6 +209,7 @@ class Vault:
         self._note_save_lock = vault_lock.for_vault(self.root)
         self._state_lock = threading.Lock()
         self._bm_lock = threading.Lock()
+        self.study_imports = folder_import.StudyImports(self)
         self._nb_lock = threading.Lock()
         self.root.mkdir(parents=True, exist_ok=True)
         (self.root / APP_DIR / "history").mkdir(parents=True, exist_ok=True)
@@ -350,6 +358,7 @@ class Vault:
             "excerpt": self.excerpt(e.body),
             "links": e.links,
             "aliases": e.aliases,
+            "hasAttachments": bool(re.search(r"!\[\[|\]\((?:/?files/|attachments/)", e.body)),
             # Revisions cover the body only: metadata updates are merged by save()
             # and must not invalidate an otherwise current text edit.
             "revision": hashlib.sha256(e.body.encode("utf-8")).hexdigest(),
@@ -439,6 +448,50 @@ class Vault:
             if hit:
                 found[n] = hit
         return found
+
+    def source_report(self, rel: str) -> dict:
+        file = self.resolve(rel)
+        if file.suffix != '.md' or not file.is_file():
+            raise ValueError('Open a saved note to check its sources')
+        entry = self.entry(file)
+        references = self.attachments(entry.body)
+        missing = {}
+        for name in (match[1].strip() for match in WIKI_RE.finditer(FENCE_RE.sub('',entry.body))):
+            if is_attachment(name) and name not in references:
+                missing[name] = missing.get(name,0)+1
+        return {'missing': [{'name':name,'count':count} for name,count in missing.items()], 'sources': list(dict.fromkeys(references.values()))}
+
+    def source_referrers(self, rel: str) -> list[dict]:
+        file = self.resolve(rel)
+        if not file.is_file() or not is_attachment(rel):
+            raise ValueError('Choose a source that is still available')
+        return [{'path':entry.rel,'title':entry.path.stem} for entry in self.entries()
+                if rel in self.attachments(entry.body).values() or entry.meta.get('source')==rel]
+
+    def repair_source(self, rel: str, name: str, replacement: str) -> dict:
+        if not all(isinstance(value,str) for value in (rel,name,replacement)) or any(value in replacement for value in '[|]#\n'):
+            raise ValueError('Choose a replacement with a filename that can be used in a link')
+        file = self.resolve(replacement)
+        if not file.is_file() or not is_attachment(replacement) or file.is_relative_to(self.root/APP_DIR):
+            raise ValueError('The replacement must be an available source file')
+        with self._note_save_lock:
+            report = self.source_report(rel)
+            if not any(item['name']==name for item in report['missing']):
+                raise ValueError('That source is already available or the link was changed')
+            entry = self.entry(self.resolve(rel))
+            def fix(match):
+                if match[1].strip() != name:
+                    return match[0]
+                start=match.start(1)-match.start()
+                end=match.end(1)-match.start()
+                return match[0][:start]+replacement+match[0][end:]
+            parts=[]
+            offset=0
+            for literal in FENCE_RE.finditer(entry.body):
+                parts.extend((WIKI_RE.sub(fix,entry.body[offset:literal.start()]),literal[0]))
+                offset=literal.end()
+            parts.append(WIKI_RE.sub(fix,entry.body[offset:]))
+            return self.save(rel,''.join(parts),None,entry.base['revision'])
 
     @staticmethod
     def tags(meta: dict, body: str) -> list[str]:
@@ -735,13 +788,36 @@ class Vault:
             return original, deleted
         return payload.replace("__", "/"), int(stamp) / 1000
 
-    def trash(self, rel: str) -> None:
+    def _trash_membership(self, item: Path) -> Path:
+        return self.root / APP_DIR / "trash-membership" / (item.name + ".json")
+
+    def trash(self, rel: str) -> str:
         p = self.resolve(rel)
-        encoded = base64.urlsafe_b64encode(self.rel(p).encode("utf-8")).decode("ascii").rstrip("=")
+        rel = self.rel(p)
+        encoded = base64.urlsafe_b64encode(rel.encode("utf-8")).decode("ascii").rstrip("=")
         dest = self.root / APP_DIR / "trash" / f"{time.time_ns()}__v2__{encoded}"
-        shutil.move(str(p), dest)
-        self.forget(p)
-        self._notebooks_removed(rel)
+        with self._note_save_lock, self._nb_lock:
+            data = self._read_notebooks()
+            owner = next((name for name, sheets in data.items() if rel in sheets), None)
+            members = data.pop(rel, None)
+            if owner is not None or members is not None:
+                record = {"children": members}
+                if owner is not None:
+                    index = data[owner].index(rel)
+                    record.update({"parent": owner, "index": index})
+                    data[owner].remove(rel)
+                journal = self._trash_membership(dest)
+                journal.parent.mkdir(parents=True, exist_ok=True)
+                self._write_json_atomic(journal, record)
+            shutil.move(str(p), dest)
+            try:
+                if owner is not None or members is not None:
+                    self._write_notebooks(data)
+            except OSError:
+                shutil.move(str(dest), p)
+                raise
+            self.forget(p)
+        return dest.name
 
     def trash_list(self) -> list[dict]:
         out = []
@@ -754,14 +830,55 @@ class Vault:
         """Put a trashed note, canvas or folder back, under a free name if its place is taken."""
         f = self.root / APP_DIR / "trash" / Path(tid).name
         orig, _deleted = self._trash_original(f.name)
-        target = self.resolve(orig)
-        n = 2
-        while target.exists():
-            target = target.with_name(f"{Path(orig).stem} {n}{Path(orig).suffix}")
-            n += 1
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(f), target)
-        self.forget(target)
+        with self._note_save_lock, self._nb_lock:
+            target = self.resolve(orig)
+            n = 2
+            while target.exists():
+                target = target.with_name(f"{Path(orig).stem} {n}{Path(orig).suffix}")
+                n += 1
+            target.parent.mkdir(parents=True, exist_ok=True)
+            journal = self._trash_membership(f)
+            data = self._read_notebooks()
+            changed = False
+            if journal.is_file():
+                record = json.loads(journal.read_text(encoding="utf-8"))
+                restored = self.rel(target)
+                owned = {member for sheets in data.values() for member in sheets}
+                children = record.get("children")
+                owner = record.get("parent")
+                if isinstance(children, list) and restored not in data:
+                    # If a child was filed elsewhere after deletion, keep that newer filing.
+                    # Exclude groups that contain the parent to avoid introducing a cycle.
+                    seen = set()
+                    def reaches_parent(path):
+                        if path in (owner, restored):
+                            return True
+                        if path in seen:
+                            return False
+                        seen.add(path)
+                        return any(reaches_parent(child) for child in data.get(path, ()))
+                    kept = []
+                    for child in children:
+                        seen.clear()
+                        if child not in owned and self._is_file(child) and not reaches_parent(child):
+                            kept.append(child)
+                    data[restored] = kept
+                    changed = True
+                if owner in data and self._is_file(owner) and restored not in owned and owner != restored:
+                    data[owner].insert(int(record.get("index", 0)), restored)
+                    changed = True
+            shutil.move(str(f), target)
+            try:
+                if changed:
+                    self._write_notebooks(data)
+            except OSError:
+                shutil.move(str(target), f)
+                raise
+            try:
+                journal.unlink(missing_ok=True)
+            except OSError:
+                pass  # the trash entry has already been restored
+            self.forget(target)
         if target.suffix == ".md":
             return self.info(target)
         return {"path": self.rel(target), "kind": "folder" if target.is_dir() else "canvas"}
@@ -772,6 +889,7 @@ class Vault:
             shutil.rmtree(f)
         else:
             f.unlink(missing_ok=True)
+        self._trash_membership(f).unlink(missing_ok=True)
 
     # ---- folders -----------------------------------------------------------
     def _folder(self, rel: str) -> Path:
@@ -893,6 +1011,11 @@ class Vault:
                 if type(value) is not int or not lo <= value <= hi:
                     raise ValueError(f"{key} must be an integer from {lo} to {hi}")
                 layout[key] = value
+            scale = workspace.get("uiScale", 100)
+            if type(scale) is not int or scale not in (90, 100, 110, 125):
+                raise ValueError("invalid workspace text size")
+            if "uiScale" in workspace:
+                layout["uiScale"] = scale
             out["workspace"] = layout
         if "snippets" in raw:
             if not isinstance(raw["snippets"], dict) or not all(isinstance(k, str) and isinstance(v, bool) for k, v in raw["snippets"].items()):
@@ -996,6 +1119,31 @@ class Vault:
             out["split"] = cls.clean_split(raw["split"])
         if "workspaces" in raw:
             out["workspaces"] = cls.clean_workspaces(raw["workspaces"])
+        if "notebookPreferences" in raw:
+            prefs = raw["notebookPreferences"]
+            if not isinstance(prefs, dict):
+                raise ValueError("notebook preferences must be an object")
+            clean = {}
+            for key, limit in (("recent", 30), ("subjectOrder", 120)):
+                items = prefs.get(key, [])
+                if not isinstance(items, list) or len(items) > limit or not all(isinstance(v, str) and len(v) <= 4096 for v in items):
+                    raise ValueError(f"invalid notebook preference: {key}")
+                clean[key] = list(dict.fromkeys(items))
+            for key in ("lastPage", "sort", "subjectLabels"):
+                values = prefs.get(key, {})
+                if not isinstance(values, dict) or len(values) > 120 or not all(
+                    isinstance(k, str) and len(k) <= 1024 and isinstance(v, str) and len(v) <= 4096 for k, v in values.items()
+                ):
+                    raise ValueError(f"invalid notebook preference: {key}")
+                clean[key] = {k: v for k, v in values.items()
+                              if key != "sort" or v in ("notebook", "title", "recent")}
+            shortcuts = prefs.get("shortcutOverrides", {})
+            if not isinstance(shortcuts, dict) or len(shortcuts) > 20 or not all(
+                isinstance(key, str) and len(key) < 25 and isinstance(value, str) and re.fullmatch(r"[A-Z0-9]", value) for key, value in shortcuts.items()
+            ):
+                raise ValueError("invalid writing shortcuts")
+            clean["shortcutOverrides"] = shortcuts
+            out["notebookPreferences"] = clean
         return out
 
     def save_app_state(self, raw) -> None:
@@ -1007,22 +1155,49 @@ class Vault:
             self._write_app_json("state.json", {k: v for k, v in state.items() if v is not None})
 
     def history(self, rel: str) -> list[dict]:
-        hdir = self.root / APP_DIR / "history" / rel
+        hdir = self.root / APP_DIR / "history" / self.rel(self.resolve(rel))
         if not hdir.exists():
             return []
         out = []
         for v in sorted(hdir.glob("*.md"), reverse=True):
-            dt = datetime.strptime(v.stem, "%Y%m%d-%H%M%S-%f")
-            out.append({"id": v.name, "time": dt.timestamp(), "size": v.stat().st_size})
+            try:
+                dt = datetime.strptime(v.stem, "%Y%m%d-%H%M%S-%f")
+            except ValueError:
+                continue
+            row = {"id": v.name, "time": dt.timestamp(), "size": v.stat().st_size}
+            label = v.with_suffix(".label").read_text(encoding="utf-8") if v.with_suffix(".label").is_file() else ""
+            if label:
+                row["label"] = label
+            out.append(row)
         return out
 
     def version(self, rel: str, vid: str) -> str:
-        v = self.root / APP_DIR / "history" / rel / Path(vid).name
+        if not isinstance(vid, str) or not re.fullmatch(r"\d{8}-\d{6}-\d{6}\.md", vid):
+            raise ValueError("Choose a saved version")
+        v = self.root / APP_DIR / "history" / self.rel(self.resolve(rel)) / vid
         return self.split(v.read_text(encoding="utf-8", errors="replace"))[1]
 
-    def diff(self, rel: str, vid: str) -> dict:
-        """What changed between a saved version and the note as it is now (bodies, line by line)."""
-        result = textdiff.line_diff(self.version(rel, vid), self.entry(self.resolve(rel)).body)
+    def checkpoint(self, rel: str, label: str) -> dict:
+        if not isinstance(label, str) or not label.strip() or len(label.strip()) > 80:
+            raise ValueError("Give this checkpoint a name up to 80 characters")
+        p = self.resolve(rel)
+        if p.suffix != ".md" or not p.is_file():
+            raise ValueError("Open a note before creating a checkpoint")
+        with self._note_save_lock:
+            hdir = self.root / APP_DIR / "history" / self.rel(p)
+            hdir.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now()
+            saved = hdir / (stamp.strftime("%Y%m%d-%H%M%S-%f") + ".md")
+            raw = p.read_bytes()
+            with saved.open("xb") as out:
+                out.write(raw)
+            saved.with_suffix(".label").write_text(label.strip(), encoding="utf-8")
+            return {"id": saved.name, "time": stamp.timestamp(), "size": len(raw), "label": label.strip()}
+
+    def diff(self, rel: str, vid: str, target: str | None = None) -> dict:
+        """Compare two saved versions, or a saved version and the current note."""
+        latest = self.version(rel, target) if target else self.entry(self.resolve(rel)).body
+        result = textdiff.line_diff(self.version(rel, vid), latest)
         return {**result, "id": vid}
 
     # ---- imports -----------------------------------------------------------
@@ -1200,17 +1375,95 @@ class Vault:
                 return False, 0, -1
         return True, score, pos
 
-    def search(self, q: str) -> list[dict]:
+    def search(self, q: str, *, subject: str = "", titles: bool = False, fold: bool = False,
+               edited_from: str = "", edited_before: str = "") -> list[dict]:
         clauses = self.parse_query(q)
         if not clauses:
             return []
+        try:
+            lower = float(edited_from) if edited_from else None
+            upper = float(edited_before) if edited_before else None
+        except (TypeError, ValueError) as error:
+            raise ValueError("Choose valid search dates") from error
+        if any(value is not None and not math.isfinite(value) for value in (lower, upper)):
+            raise ValueError("Choose valid search dates")
+
+        entries = self.entries()
+        by_path = {entry.rel: entry for entry in entries}
+        groups = self._read_notebooks() if subject else {}
+        parents = {}
+        for root, pages in groups.items():
+            if root not in by_path:
+                continue
+            for page in pages:
+                if page == root or page not in by_path or page in parents:
+                    continue
+                ancestor = root
+                while ancestor in parents and ancestor != page:
+                    ancestor = parents[ancestor]
+                if ancestor != page:
+                    parents[page] = root
+
+        def matches_subject(entry):
+            root = entry.rel
+            while root in parents:
+                root = parents[root]
+            note = by_path[root]
+            group = note.base["folder"].split("/")[0] or (note.path.stem if root in groups else "")
+            return subject == group
+
+        def filters(entry):
+            stamp = entry.base["modified"]
+            return ((not subject or matches_subject(entry)) and
+                    (lower is None or stamp >= lower) and (upper is None or stamp < upper))
+
+        if fold:
+            clauses = [[(kind, pdf_index.search_fold(value) if kind == "text" else value, neg)
+                        for kind, value, neg in clause] for clause in clauses]
         hits = []
-        for e in self.entries():
-            ok, score, pos = self.score_entry(e, clauses)
+        for entry in entries:
+            if not filters(entry):
+                continue
+            if not (fold or titles):
+                ok, score, pos = self.score_entry(entry, clauses)
+                body = entry.text
+            else:
+                body = entry.body
+                title = pdf_index.search_fold(entry.path.stem) if fold else entry.title_low
+                searchable = "" if titles else (pdf_index.search_fold(body) if fold else body.lower())
+                ok, score, pos = self._library_match(entry, clauses, title, searchable, titles)
+                if fold and pos >= 0:
+                    pos = pdf_index.source_offset(body, pos)
             if ok:
-                snippet = re.sub(r"\s+", " ", e.text[max(0, pos - 60): pos + 100]).strip() if pos >= 0 else ""
-                hits.append({**e.base, "snippet": snippet, "score": score})
-        return sorted(hits, key=lambda h: -h["score"])[:50]
+                snippet = re.sub(r"\s+", " ", body[max(0, pos - 60):pos + 100]).strip() if pos >= 0 else ""
+                hits.append({**entry.base, "snippet": snippet, "score": score})
+        return sorted(hits, key=lambda hit: -hit["score"])[:50]
+
+    @classmethod
+    def _library_match(cls, entry, clauses, title, body, titles):
+        result, position = 0, -1
+        for clause in clauses:
+            matched = False
+            for kind, value, excluded in clause:
+                if kind == "text":
+                    at = body.find(value) if value else -1
+                    score = 10 * bool(value and value in title) + int(at >= 0)
+                elif kind == "regex":
+                    score, at = int(bool(value.search(entry.path.stem))), -1
+                    if not titles and value.search(entry.body):
+                        score += 1
+                else:
+                    score, at = cls.match_term(entry, kind, value)
+                if excluded:
+                    matched = matched or not score
+                elif score:
+                    matched = True
+                    result += score
+                    if position < 0 <= at:
+                        position = at
+            if not matched:
+                return False, 0, -1
+        return True, result, position
 
     # ---- databases: a folder or tag viewed as rows with typed properties ------
 
@@ -1437,7 +1690,8 @@ class Vault:
                 raise ValueError("that note is not a notebook")
             extras = data.get(real, [])
             known = set(extras)
-            data[real] = [s for s in order if s in known] + [s for s in extras if s not in set(order)]
+            requested = list(dict.fromkeys(s for s in order if isinstance(s, str) and s in known))
+            data[real] = requested + [s for s in extras if s not in requested]
             self._write_notebooks(data)
             return self._notebook_view(real, data)
 
@@ -1458,10 +1712,101 @@ class Vault:
             if target in descendants: raise ValueError('A section cannot be moved inside itself')
             if [p for p, members in data.items() if rel in members] == [target]:
                 return self._notebook_view(target, data)
+            previous = next(((primary, members.index(rel)) for primary, members in data.items() if rel in members), (None, 0))
             for primary, members in data.items(): data[primary] = [p for p in members if p != rel]
             data[target] = [*data[target], rel]
             self._write_notebooks(data)
-            return self._notebook_view(target, data)
+            return {**self._notebook_view(target, data), "undo": {
+                "path": rel, "target": target, "previous": previous[0], "position": previous[1]}}
+
+    def duplicate_page(self, rel: str) -> dict:
+        with self._note_save_lock, self._nb_lock:
+            source = self.resolve(rel)
+            if source.suffix != ".md" or not source.is_file():
+                raise ValueError("Choose an existing page to duplicate")
+            source = self.entry(source)
+            folder = self.rel(source.path.parent) if source.path.parent != self.root else ""
+            copy = self.unique(folder, source.path.stem + " copy")
+            copies = {}
+            allocated = []
+            def clone_sketch(match):
+                reference = match.group(1)
+                if reference in copies:
+                    return match[0].replace(reference, copies[reference], 1)
+                original = self.resolve(reference)
+                if not original.is_file():
+                    return match[0]
+                target = self.unique(folder, copy.stem + " sketch", suffix=".canvas")
+                new_path = self.rel(target)
+                allocated.append(target)
+                self._write_json_atomic(target, json.loads(original.read_text(encoding="utf-8")))
+                original_ink = self._drawing_file(reference)
+                if original_ink.is_file():
+                    new_ink = self._drawing_file(new_path)
+                    allocated.append(new_ink)
+                    self._write_json_atomic(new_ink, json.loads(original_ink.read_text(encoding="utf-8")))
+                copies[reference] = new_path
+                return match[0].replace(reference, new_path, 1)
+            try:
+                body = re.sub(r"!\[\[([^\]\n|]+\.canvas)(?:\|[^\]\n]*)?\]\]", clone_sketch, source.body, flags=re.IGNORECASE)
+                meta = {k: v for k, v in source.meta.items() if k not in ("pinned", "created", "aliases")}
+                meta["created"] = datetime.now().isoformat(timespec="seconds")
+                allocated.append(copy)
+                self.write_note(copy, self.join(meta, body))
+                groups = self._read_notebooks()
+                parent = next((key for key, pages in groups.items() if rel in pages), None)
+                if parent is not None:
+                    groups[parent].insert(groups[parent].index(rel) + 1, self.rel(copy))
+                    self._write_notebooks(groups)
+            except BaseException:
+                for item in reversed(allocated):
+                    item.unlink(missing_ok=True)
+                raise
+            return self.info(self.settled(copy), with_body=True)
+
+    def move_pages(self, paths: list[str], target: str) -> dict:
+        if (not isinstance(paths, list) or not 1 <= len(paths) <= 200
+                or not all(isinstance(path, str) for path in paths) or len(set(paths)) != len(paths)):
+            raise ValueError("Choose up to 200 different pages")
+        with self._note_save_lock, self._nb_lock:
+            data = self._read_notebooks()
+            if target not in data or not self._is_file(target):
+                raise ValueError("The destination chapter no longer exists")
+            if any(not path.endswith(".md") or not self._is_file(path) or path in data for path in paths):
+                raise ValueError("Select individual pages. Move chapters one at a time.")
+            moving = set(paths)
+            # Prevalidate every page before writing the single notebook sidecar.
+            for primary in data:
+                data[primary] = [member for member in data[primary] if member not in moving]
+            data[target].extend(paths)
+            self._write_notebooks(data)
+            return {"moved": len(paths), **self._notebook_view(target, data)}
+
+    def undo_page_move(self, receipt: dict) -> dict:
+        path, target, previous, position = (receipt.get(key) for key in ("path", "target", "previous", "position"))
+        if not isinstance(path, str) or not isinstance(target, str) or (previous is not None and not isinstance(previous, str)) or type(position) is not int or position < 0:
+            raise ValueError("invalid page move receipt")
+        with self._note_save_lock, self._nb_lock:
+            data = self._read_notebooks()
+            # A later move or deletion wins over an earlier Undo action.
+            if not self._is_file(path) or [book for book, members in data.items() if path in members] != [target]:
+                raise ValueError("The page has changed location since it was moved.")
+            if previous is not None and (previous not in data or not self._is_file(previous)):
+                raise ValueError("The previous chapter is unavailable.")
+            pending = [path]
+            descendants = set()
+            while pending:
+                node = pending.pop()
+                if node not in descendants:
+                    descendants.add(node)
+                    pending.extend(data.get(node, []))
+            if previous in descendants:
+                raise ValueError("The previous chapter is now inside this page.")
+            data[target].remove(path)
+            if previous is not None:
+                data[previous].insert(position, path)
+            self._write_notebooks(data)
+            return {"ok": True}
 
     def remove_sheet(self, sheet: str) -> dict:
         """Trash one extra sheet and drop it from its notebook. The primary note is never removed this way."""
@@ -1537,6 +1882,36 @@ class Vault:
             raise ValueError("not a canvas")
         return self.root / APP_DIR / "canvas" / (self.rel(inside) + ".draw.json")
 
+    @staticmethod
+    def _drawing_options(raw):
+        if not isinstance(raw, dict) or any(type(raw.get(k)) is not bool for k in ("grid", "axes")):
+            raise ValueError("drawing options must contain grid and axes booleans")
+        options = {k: raw[k] for k in ("grid", "axes")}
+        for key, limit in (("xLabel", 40), ("yLabel", 40), ("caption", 180)):
+            if key not in raw:
+                continue
+            if not isinstance(raw[key], str) or len(raw[key]) > limit:
+                raise ValueError(f"invalid {key} for sketch")
+            options[key] = raw[key]
+        if "axisStep" in raw:
+            if type(raw["axisStep"]) not in (int, float) or not 15 <= raw["axisStep"] <= 400:
+                raise ValueError("axis spacing must be from 15 to 400")
+            options["axisStep"] = raw["axisStep"]
+        if "locked" in raw:
+            if type(raw["locked"]) is not bool:
+                raise ValueError("sketch lock must be true or false")
+            options["locked"] = raw["locked"]
+        if "labels" in raw:
+            labels = raw["labels"]
+            if not isinstance(labels, list) or len(labels) > 80:
+                raise ValueError("sketch can have at most 80 labels")
+            for label in labels:
+                if (not isinstance(label, dict) or not isinstance(label.get("text"), str) or not 1 <= len(label["text"]) <= 80
+                        or any(type(label.get(key)) not in (int, float) or not -1e6 <= label[key] <= 1e6 for key in ("x", "y"))):
+                    raise ValueError("invalid sketch label")
+            options["labels"] = [{key: label[key] for key in ("x", "y", "text")} for label in labels]
+        return options
+
     def canvas_drawing(self, rel: str) -> dict:
         f = self._drawing_file(rel)
         if not self.resolve(rel).is_file():
@@ -1564,9 +1939,7 @@ class Vault:
                 raise FileNotFoundError("This canvas was moved or deleted. Keep or export your unsaved drawing before reopening it.")
             if options is None:
                 options = self.canvas_drawing(rel).get("options", {"grid": True, "axes": False})
-            if not isinstance(options, dict) or any(type(options.get(k)) is not bool for k in ("grid", "axes")):
-                raise ValueError("drawing options must contain grid and axes booleans")
-            options = {k: options[k] for k in ("grid", "axes")}
+            options = self._drawing_options(options)
             self._write_json_atomic(f, {"strokes": strokes, "options": options})
             return {"strokes": strokes, "options": options}
 
@@ -1591,8 +1964,13 @@ class Vault:
                 continue
             for name, full in e.wiki:
                 if name in names:
-                    line = next((ln for ln in e.body.splitlines() if full in ln), "")
-                    out.append({"path": e.rel, "title": e.path.stem, "context": line.strip()[:200]})
+                    paragraph = next((part for part in re.split(r"\n\s*\n", e.body) if full in part), "")
+                    excerpt = re.sub(r"\s+", " ", paragraph.strip())
+                    start = max(0, excerpt.find(full) - 120)
+                    context = ("…" if start else "") + excerpt[start:start+360]
+                    if len(excerpt) > start + 360:
+                        context += "…"
+                    out.append({"path": e.rel, "title": e.path.stem, "context": context})
                     break
         return out
 
@@ -1824,6 +2202,50 @@ INDEX_TRIGGERS = ("/api/note", "/api/move", "/api/folder", "/api/restore", "/api
 SYNC_TRIGGERS = INDEX_TRIGGERS + ("/api/canvas", "/api/upload")
 
 
+def installed_release_info(here: Path) -> dict:
+    """Only list a rollback copy when every file in its original manifest matches."""
+    release = next((parent / 'release.json' for parent in here.parents if (parent / 'release.json').is_file()), None)
+    version = 'Development'
+    if release:
+        try:
+            version = json.loads(release.read_text(encoding='utf-8')).get('version', version)
+        except (OSError,ValueError,AttributeError):
+            pass
+    else:
+        try:
+            if sys.platform == 'darwin' and getattr(sys,'frozen',False):
+                plist = Path(sys.executable).resolve().parent.parent / 'Info.plist'
+                version = plistlib.loads(plist.read_bytes()).get('CFBundleShortVersionString',version)
+            else:
+                version = json.loads((here.parent.parent/'version.json').read_text(encoding='utf-8')).get('version',version)
+        except (OSError,ValueError,AttributeError,plistlib.InvalidFileException):
+            pass
+    previous = None
+    if release:
+        for candidate in sorted((release.parent/'backups').glob('cortex-lean-*/release.json'),reverse=True):
+            directory = candidate.parent
+            if directory.is_symlink() or directory.parent.is_symlink() or candidate.is_symlink() or not (directory/'deployment.json').is_file():
+                continue
+            try:
+                info = json.loads(candidate.read_text(encoding='utf-8'))
+                files = info.get('files')
+                if info.get('product')!='Cortex' or not isinstance(files,dict) or not files or not isinstance(info.get('version'),str):
+                    continue
+                for rel,expected in files.items():
+                    artifact = (directory/rel).resolve()
+                    if not artifact.is_relative_to(directory) or not artifact.is_file():
+                        break
+                    with artifact.open('rb') as payload:
+                        if hashlib.file_digest(payload,'sha256').hexdigest()!=expected:
+                            break
+                else:
+                    previous = {'version':info['version'],'folder':str(directory)}
+                    break
+            except (OSError,ValueError,AttributeError,TypeError):
+                continue
+    return {'version':version,'previous':previous}
+
+
 class Handler(SimpleHTTPRequestHandler):
     vault: Vault
     recovery: recovery.RecoveryService
@@ -1946,10 +2368,31 @@ class Handler(SimpleHTTPRequestHandler):
             if path == '/api/backups/run' and method == 'POST':
                 self.sync_body()  # JSON-only mutation, like configured sync.
                 return self.send_json(self.backups.request_run(), 202)
+            if path == '/api/backups/archives' and method == 'GET':
+                return self.send_json(self.backups.archives())
+            if path.startswith('/api/backups/') and method == 'POST':
+                b = self.sync_body()
+                operations = {
+                    '/api/backups/keep': lambda: self.backups.keep_archive(b.get('archive'), b.get('keep')),
+                    '/api/backups/folder': lambda: self.backups.configure_destination(b.get('destination')),
+                    '/api/backups/reveal': self.backups.reveal,
+                    '/api/backups/restore-preview': lambda: self.backups.review_restore(b.get('archive')),
+                    '/api/backups/restore': lambda: self.backups.restore_archive(b.get('archive')),
+                }
+                if path in operations:
+                    try:
+                        return self.send_json(operations[path]())
+                    except (OSError, zipfile.BadZipFile) as error:
+                        raise ValueError(str(error)) from error
+            if path == '/api/editing/activity' and method == 'POST':
+                self.sync_body()
+                self.documents.note_changed()
+                self.backups.note_changed()
+                return self.send_json({"ok": True})
             if path == '/api/documents/status' and method == 'GET':
                 return self.send_json(self.documents.status())
             if path == '/api/documents/search' and method == 'GET':
-                return self.send_json(self.documents.search(q.get('q', ''), q.get('path') or None))
+                return self.send_json(self.documents.search(q.get('q', ''), q.get('path') or None, subject=q.get('subject', ''), fold=q.get('fold') == '1'))
             if method != "GET" and path != "/api/recovery/draft" and getattr(v, "legacy_migration_pending", False):
                 import legacy_snapshot
                 legacy_snapshot.ensure(v)
@@ -1963,7 +2406,7 @@ class Handler(SimpleHTTPRequestHandler):
                             if not source.is_file() or not source.resolve().is_relative_to(v.root):
                                 continue
                             rel = source.relative_to(v.root).as_posix()
-                            if rel == ".cortex/writer.lock" or source.name.endswith(".tmp"):
+                            if rel == ".cortex/writer.lock" or rel.startswith('.cortex/.import-') or source.name.endswith(".tmp"):
                                 continue
                             zipped.write(source, rel)
                     size = archive.tell()
@@ -1990,6 +2433,37 @@ class Handler(SimpleHTTPRequestHandler):
                         if not note_path.is_file() or note_path.suffix.lower() != ".md":
                             raise ValueError("Reopen the note before inserting a graph. Your graph draft is still available.")
                         return self.send_json(figures.save(v.root, b.get("config")))
+            if path == "/api/note/presence" and method == "POST":
+                command = self.body_json()
+                token = command.get("token", "")
+                path_name = command.get("path", "")
+                if not isinstance(token, str) or not re.fullmatch(r"[a-f0-9-]{36}", token) or not isinstance(path_name, str):
+                    raise ValueError("invalid editing session")
+                page = v.resolve(path_name)
+                if not page.is_file() or page.suffix.lower() != ".md":
+                    return self.send_json({"other": False})
+                identity = hashlib.sha256(os.path.normcase(str(page)).encode()).hexdigest()
+                presence_dir = Path(tempfile.gettempdir()) / "cortex-editor-presence"
+                stamp_file = presence_dir / (identity + ".json")
+                now = time.time()
+                with v._note_save_lock.hold(timeout=0.1):
+                    try:
+                        current = json.loads(stamp_file.read_text(encoding="utf-8"))
+                        current = {key: value for key, value in current.items() if isinstance(value, (int, float)) and now - value < 22}
+                    except (OSError, ValueError, AttributeError):
+                        current = {}
+                    if command.get("leave") is True:
+                        current.pop(token, None)
+                    else:
+                        current[token] = now
+                    if not current:
+                        stamp_file.unlink(missing_ok=True)
+                    else:
+                        presence_dir.mkdir(exist_ok=True)
+                        v._write_json_atomic(stamp_file, current)
+                return self.send_json({"other": any(key != token for key in current)})
+            if path == "/api/about" and method == "GET":
+                return self.send_json(installed_release_info(Path(__file__).resolve()))
             if path == "/api/tree" and method == "GET":
                 return self.send_json(v.tree())
             if path == "/api/canvas":
@@ -2013,8 +2487,7 @@ class Handler(SimpleHTTPRequestHandler):
                     b = self.body_json()
                     return self.done(v.create(b.get("folder", ""), b.get("title", "Untitled"), b.get("content", "")))
                 if method == "DELETE":
-                    v.trash(q["path"])
-                    return self.send_json({"ok": True})
+                    return self.send_json({"ok": True, "id": v.trash(q["path"])})
             if path == "/api/notebook/create" and method == "POST":
                 b = self.body_json()
                 return self.done(v.create_notebook(b.get("title")))
@@ -2030,6 +2503,16 @@ class Handler(SimpleHTTPRequestHandler):
                 if method == "POST":
                     b = self.body_json()
                     return self.done(v.add_sheet(b["path"], b.get("title")))
+            if path == "/api/notebook/duplicate" and method == "POST":
+                return self.done(v.duplicate_page(self.body_json()["path"]))
+            if path == "/api/notebook/move-many" and method == "POST":
+                b = self.body_json()
+                target = b.get("target")
+                if not isinstance(target, str):
+                    raise ValueError("Choose a destination")
+                return self.done(v.move_pages(b.get("paths"), target))
+            if path == "/api/notebook/undo-move" and method == "POST":
+                return self.done(v.undo_page_move(self.body_json()))
             if path == "/api/notebook/reorder" and method == "POST":
                 b = self.body_json()
                 return self.send_json(v.reorder_sheets(b["primary"], b.get("order") or []))
@@ -2050,6 +2533,12 @@ class Handler(SimpleHTTPRequestHandler):
                     raise ValueError("draft path must be a Markdown note")
                 v.resolve(rel)
                 return self.send_json(self.recovery.keep(rel, b.get("content", ""), b.get("baseRevision")))
+            if path == "/api/recovery/compare" and method == "GET":
+                draft = self.recovery.read(q["id"])
+                target = v.resolve(draft["path"])
+                if not target.is_file():
+                    return self.send_json({"error": "The original note is no longer in this notebook."}, 404)
+                return self.send_json({**textdiff.line_diff(v.entry(target).body, draft["content"]), "id": draft["id"]})
             if path == "/api/recovery" and method == "GET":
                 if q.get("id"):
                     return self.send_json(self.recovery.read(q["id"]))
@@ -2089,6 +2578,16 @@ class Handler(SimpleHTTPRequestHandler):
                         return self.send_json({"error": "Folder is not empty. Move or delete its notes first."}, 400)
                     p.rmdir()
                     return self.send_json({"ok": True})
+            if path == "/api/folder/reveal" and method == "POST":
+                import subprocess
+                directory = v.resolve(self.body_json().get("path", ""))
+                if not directory.is_dir():
+                    raise ValueError("This subject does not have a local folder")
+                if sys.platform == "win32":
+                    os.startfile(directory)
+                else:
+                    subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(directory)])
+                return self.send_json({"ok": True})
             if path == "/api/folder/move" and method == "POST":
                 b = self.body_json()
                 return self.send_json(v.move_folder(b["from"], b["to"]))
@@ -2107,7 +2606,16 @@ class Handler(SimpleHTTPRequestHandler):
                     v.save_app_state(self.body_json())
                     return self.send_json({"ok": True})
             if path == "/api/search":
-                return self.send_json(v.search(q.get("q", "")))
+                return self.send_json(v.search(q.get("q", ""), subject=q.get("subject", ""),
+                                               titles=q.get("titles") == "1", fold=q.get("fold") == "1",
+                                               edited_from=q.get("from", ""), edited_before=q.get("before", "")))
+            if path == "/api/sources/report" and method == "GET":
+                return self.send_json(v.source_report(q["path"]))
+            if path == "/api/sources/references" and method == "GET":
+                return self.send_json(v.source_referrers(q["path"]))
+            if path == "/api/note/source-repair" and method == "POST":
+                b = self.sync_body()
+                return self.send_json(v.repair_source(b["path"],b["name"],b["replacement"]))
             if path == "/api/backlinks":
                 return self.send_json(v.backlinks(q["path"]))
             if path == "/api/outgoing":
@@ -2117,6 +2625,28 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/link-mention" and method == "POST":
                 b = self.body_json()
                 return self.send_json(v.link_mention(b["path"], b["target"]))
+            if path == "/api/export/markdown" and method == "GET":
+                entry = publish.selected_notes(v,[q["path"]])[0]
+                return self.send_download(entry.path.read_bytes(),"text/markdown; charset=utf-8",entry.path.name)
+            if path == "/api/export/print" and method == "GET":
+                paths = urllib.parse.parse_qs(url.query).get("path",[])
+                data = publish.print_preview(v,paths).encode("utf-8")
+                return self.send_download(data,"text/html; charset=utf-8",None)
+            if path == "/api/export/bundle" and method == "GET":
+                paths = urllib.parse.parse_qs(url.query).get("path",[])
+                with tempfile.TemporaryFile() as bundle:
+                    with v._note_save_lock:
+                        publish.write_note_bundle(v,paths,bundle)
+                    length = bundle.tell()
+                    bundle.seek(0)
+                    self.send_response(200)
+                    self.send_header("Content-Type","application/zip")
+                    self.send_header("Content-Length",str(length))
+                    self.send_header("Content-Disposition",'attachment; filename="Cortex-pages.zip"')
+                    self.send_header("Cache-Control","no-store")
+                    self.end_headers()
+                    shutil.copyfileobj(bundle,self.wfile)
+                    return
             if path == "/api/export/html" and method == "GET":
                 data = publish.export_note_html(v, q["path"], print_dialog=q.get("print") == "1").encode()
                 name = None if q.get("inline") == "1" else Path(q["path"]).stem + ".html"
@@ -2132,11 +2662,14 @@ class Handler(SimpleHTTPRequestHandler):
                 b = self.body_json()
                 return self.send_json(v.template(b["path"], b.get("title", "")))
             if path == "/api/history":
+                if method == "POST":
+                    b = self.sync_body()
+                    return self.send_json(v.checkpoint(b["path"], b["label"]))
                 return self.send_json(v.history(q["path"]))
             if path == "/api/version":
                 return self.send_json({"content": v.version(q["path"], q["id"])})
             if path == "/api/diff":
-                return self.send_json(v.diff(q["path"], q["id"]))
+                return self.send_json(v.diff(q["path"], q["id"], q.get("target")))
             if path == "/api/trash":
                 if method == "GET":
                     return self.send_json(v.trash_list())
@@ -2145,6 +2678,26 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.send_json({"ok": True})
             if path == "/api/restore" and method == "POST":
                 return self.send_json(v.restore(self.body_json()["id"]))
+            if path == "/api/import/reports" and method == "GET":
+                return self.send_json(v.study_imports.reports())
+            if path == "/api/import/status" and method == "GET":
+                return self.send_json(v.study_imports.status(q.get("id","")))
+            if path == "/api/import/preview" and method == "POST":
+                size = int(self.headers.get("Content-Length") or 0)
+                if self.headers.get("X-Cortex-Import") != "preview" or not 0 < size <= folder_import.StudyImports.LIMIT:
+                    self.close_connection = True
+                    raise ValueError("Choose a batch of documents up to 384 MB")
+                return self.send_json(v.study_imports.preview(self.rfile.read(size), q.get("name",""), q.get("subject",""), q.get("modified","")))
+            if path in ("/api/import/commit", "/api/import/cancel", "/api/import/retry") and method == "POST":
+                b = self.sync_body()
+                ident = b.get("id","")
+                if not isinstance(ident,str):
+                    raise ValueError("Choose an available import")
+                if path == "/api/import/cancel":
+                    return self.send_json(v.study_imports.cancel(ident))
+                if path == "/api/import/retry":
+                    return self.send_json(v.study_imports.retry(ident))
+                return self.send_json(v.study_imports.commit(ident,b.get("subject",""),b.get("options",{}),b.get("existing") is True))
             if path.startswith("/api/import/") and method == "POST":
                 kind = path[len("/api/import/"):]
                 if kind not in IMPORTERS:
@@ -2243,7 +2796,9 @@ class Handler(SimpleHTTPRequestHandler):
 
     def changed(self, method: str):
         path = urllib.parse.urlparse(self.path).path
-        if not path.startswith(('/api/backups/', '/api/documents/')):
+        if path in ('/api/import/preview','/api/import/cancel','/api/import/retry'):
+            return self.route(method)
+        if path != '/api/editing/activity' and not path.startswith(('/api/backups/', '/api/documents/')):
             self.documents.note_changed()
         self.route(method)
         if path.startswith(SYNC_TRIGGERS):

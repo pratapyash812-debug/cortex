@@ -50,6 +50,14 @@ class FigureTests(unittest.TestCase):
   result=figures.render({'kind':'diagram','title':'<script>alert(1)</script>','steps':['<img onerror="bad">','A & B']})
   root=ET.fromstring(result['svg']);self.assertNotIn('<script>',result['svg']);self.assertIn('&lt;script&gt;',result['svg'])
   self.assertFalse(any(node.tag.endswith('script') for node in root.iter()))
+ def test_axis_limits_caption_and_accessible_values_in_preview(self):
+  data={'kind':'line','data':'Year\tProfit\n2024\t1,2\n2025\t','numberFormat':'decimal-comma','yMin':-1,'yMax':4,'caption':'Profit & growth'}
+  result=figures.render(data)
+  self.assertEqual(result['inspection'],{'columns':['Year','Profit'],'rows':[['2024',1.2],['2025',None]]})
+  self.assertIn('Profit &amp; growth',result['svg'])
+  self.assertIn('clip-path=',result['svg'])
+  with self.assertRaises(ValueError):figures.render({**data,'yMax':-2})
+
  def test_preview_limits_are_bounded(self):
   with self.assertRaises(ValueError):figures.data_rows('Label,Value\n'+'a,1\n'*201)
   with self.assertRaises(ValueError):figures.render({'kind':'function','expressions':['x']*5})

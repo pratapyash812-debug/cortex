@@ -4,10 +4,11 @@ export interface WorkspacePreferences {
   subjectWidth: number;
   pageWidth: number;
   wide: boolean;
+  uiScale?: number;
 }
 
 export const defaultWorkspace: WorkspacePreferences = {
-  subjects: true, pages: true, subjectWidth: 188, pageWidth: 224, wide: false,
+  subjects: true, pages: true, subjectWidth: 188, pageWidth: 224, wide: false, uiScale: 100,
 };
 
 export const panelLimits = {subjects: [144, 300], pages: [172, 400]} as const;

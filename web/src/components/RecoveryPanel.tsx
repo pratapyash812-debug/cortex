@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Clipboard, FileText, RotateCcw } from 'lucide-react';
 import { api, ApiError } from '../api';
 import { MarkdownText } from './MarkdownText';
+import { DiffView } from './NoteArchive';
+import type { DiffData } from '../api';
 import { Modal } from './Modal';
 import './RecoveryPanel.css';
 
@@ -28,11 +30,14 @@ function basenameWithoutExtension(path: string): string {
   return basename.replace(/\.md$/i, '') || 'Note';
 }
 
-export function RecoveryPanel({ onClose, onRecovered }: { onClose: () => void; onRecovered: (path: string, sourcePath: string, recoveredContent: string) => void | Promise<void> }) {
+export function RecoveryPanel({ onClose, onRecovered, initialDraftId = '' }: { onClose: () => void; onRecovered: (path: string, sourcePath: string, recoveredContent: string) => void | Promise<void>; initialDraftId?: string }) {
   const [items, setItems] = useState<RecoverySummary[]>([]);
   const [total, setTotal] = useState(0);
   const [notices, setNotices] = useState<string[]>([]);
-  const [selectedId, setSelectedId] = useState('');
+  const [selectedId, setSelectedId] = useState(initialDraftId);
+  const [comparison, setComparison] = useState(false);
+  const [difference, setDifference] = useState<DiffData|null>(null);
+  const [compareError, setCompareError] = useState('');
   const [draft, setDraft] = useState<RecoveryDraft | null>(null);
   const [loadingList, setLoadingList] = useState(true);
   const [loadingDraft, setLoadingDraft] = useState(false);
@@ -78,6 +83,17 @@ export function RecoveryPanel({ onClose, onRecovered }: { onClose: () => void; o
       .finally(() => { if (active) setLoadingDraft(false); });
     return () => { active = false; };
   }, [selectedId]);
+
+  useEffect(() => {
+    if (!comparison || !selectedId) return;
+    let active = true;
+    setCompareError('');
+    setDifference(null);
+    requestRecovery<DiffData>(`/api/recovery/compare?id=${encodeURIComponent(selectedId)}`)
+      .then(result => { if (active) setDifference(result); })
+      .catch(cause => { if (active) setCompareError(cause instanceof Error ? cause.message : 'Could not compare versions.'); });
+    return () => { active = false; };
+  }, [comparison, selectedId]);
 
   const selectDraft = (id: string) => {
     if (!activeAction.current) setSelectedId(id);
@@ -163,7 +179,8 @@ export function RecoveryPanel({ onClose, onRecovered }: { onClose: () => void; o
           {draft && (
             <>
               <header className="recovery-source"><div><span className="recovery-muted">Original note</span><b>{draft.path}</b><small>Saved {prettyDate(draft.createdAt)}</small></div></header>
-              <div className="recovery-preview"><MarkdownText text={draft.content} /></div>
+              <button type="button" className="btn ghost small" aria-pressed={comparison} onClick={()=>setComparison(value=>!value)}>{comparison?'Preview draft':'Compare with saved note'}</button>
+              <div className="recovery-preview">{comparison?<DiffView diff={difference} error={compareError} comparison="the saved note"/>:<MarkdownText text={draft.content} />}</div>
               <footer className="recovery-actions">
                 <button type="button" className="btn ghost" disabled={!!action} onClick={() => void copy()}><Clipboard size={15} />{action === 'copy' ? 'Copying…' : 'Copy text'}</button>
                 <button type="button" className="btn primary" disabled={!!action} onClick={() => void saveAsNew()}><FileText size={15} />{action === 'save' ? 'Saving…' : savedPath ? 'Open recovered note' : 'Save as new note'}</button>

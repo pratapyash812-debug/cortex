@@ -1,0 +1,13 @@
+.page-outline li{display:flex;gap:4px;align-items:center}
+.page-outline .outline-copy{opacity:.68}
+.page-outline .outline-copy:is(:focus-visible,:hover){opacity:1}
+.note-sources ul{list-style:none;margin:0;padding:0}
+.note-sources li{padding:10px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
+.note-sources li :is(small,p){display:block;margin:4px 0;color:var(--muted)}
+.note-sources-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px}
+.cortex-reference-layout{display:flex;min-height:0;flex:1}
+.cortex-reference-layout>.lean-document{min-width:0}
+.reference-pdf{width:min(43%,560px);min-width:260px;min-height:0;overflow:auto;border-inline-start:1px solid var(--line);background:var(--list)}
+.reference-pdf>header{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--line)}
+.reference-pdf h2{font-size:14px;margin:0;overflow-wrap:anywhere}
+@container writing (max-width:680px){.cortex-reference-layout{flex-direction:column}.reference-pdf{width:100%;min-width:0;max-height:46%;border-inline-start:0;border-top:1px solid var(--line)}}

@@ -251,7 +251,8 @@ class Renderer:
     def inline(self, text: str) -> str:
         text = CODE_SPAN.sub(lambda m: self._hold(f"<code>{esc(m.group(2).strip())}</code>"), text)
         text = MATH.sub(lambda m: self._hold(f'<span class="math">{esc(m.group(0))}</span>'), text)
-        text = re.sub(r'<u>(.+?)</u>', lambda m: self._hold('<u>' + self.inline(m.group(1)) + '</u>'), text)
+        text = re.sub(r'<(u|sup|sub)>(.+?)</\1>',
+                      lambda m: self._hold(f'<{m[1]}>{self.inline(m[2])}</{m[1]}>'), text)
 
         def styled_text(match: re.Match) -> str:
             font, size, colour, body = match.groups()
@@ -598,3 +599,146 @@ def export_note_html(vault, rel: str, *, print_dialog: bool = False) -> str:
 
 
 # ---- static site ---------------------------------------------------------------
+
+
+def selected_notes(vault, paths):
+    """Resolve explicit note paths in their displayed order."""
+    if not isinstance(paths,list) or not 1<=len(paths)<=100 or not all(isinstance(path,str) for path in paths):
+        raise ValueError('Choose between 1 and 100 notes')
+    result=[]
+    for relative in dict.fromkeys(paths):
+        path=vault.resolve(relative)
+        if path.suffix != '.md' or not path.is_file() or path.is_relative_to(vault.root/'.cortex'):
+            raise ValueError('A selected note is unavailable')
+        result.append(vault.entry(path))
+    return result
+
+
+def print_preview(vault, paths):
+    notes=selected_notes(vault,paths)
+    context=SingleContext(vault,vault.entries())
+    articles=[]
+    for note in notes:
+        content=Renderer(context,seen=frozenset({note.rel})).render(note.body)
+        style=note.meta.get('documentStyle',{})
+        font=TEXT_FONTS.get(style.get('font')) if isinstance(style,dict) and isinstance(style.get('font'),str) else None
+        if font:
+            content=f'<div style="font-family:{esc(font)}">{content}</div>'
+        articles.append(f'<article><h1>{esc(note.path.stem)}</h1>{content}</article>')
+    body=''.join(articles)
+    css=CSS+"""
+:root,:root[data-theme]{--bg:#fff;--fg:#1c242d;--muted:#4c545d;--line:#b8c0cb;--table-line:#858894;--soft:#f5f6f8;--accent:#3e3689;--mark:#fff3a3;color-scheme:light}
+@page{margin:15mm}
+article{padding:1rem;overflow-wrap:anywhere}article+article{border-top:1px solid var(--line)}
+.print-tools{display:flex;align-items:center;justify-content:space-between;gap:1em;border-bottom:1px solid var(--line);padding:.75rem 1rem;background:var(--soft)}
+.print-tools button{font:inherit;padding:.35rem .75rem}table{display:table;max-width:100%;table-layout:auto;overflow:visible}td,th{overflow-wrap:anywhere}
+@media print {article{padding:0}article+article{break-before:page;border:0}table{break-inside:auto}tr{break-inside:avoid}thead{display:table-header-group}}
+"""
+    scripts=''
+    if _MATH_MARKUP.search(body):
+        assets=_katex_assets()
+        if assets:
+            katex_css=_inline_katex_css(assets[0])
+            if katex_css is not None:
+                css+='\n'+katex_css
+                scripts=_katex_inline_script(assets[1])
+    header='<header class="print-tools noprint"><span>Print preview</span><button type="button" onclick="window.print()">Print / Save as PDF</button></header>'
+    return page(notes[0].path.stem if len(notes)==1 else 'Cortex notes',header+'<main>'+body+'</main>',css=css,script=scripts)
+
+
+def write_note_bundle(vault, paths, output):
+    """Write selected notes and their local source files with portable links."""
+    import zipfile
+    notes=selected_notes(vault,paths)
+    context=ExportContext(vault,vault.entries())
+    selected={note.rel for note in notes}
+    collected=set()
+    generated={}
+    regular_markdown=re.compile(r'(!?\[[^\]\n]*\]\()([^\s)]+)(\))')
+
+    def note_text(note):
+        relative_to=posixpath.dirname(note.rel) or '.'
+        def link(target, heading=''):
+            route=urllib.parse.quote(posixpath.relpath(target,relative_to))
+            return route+('#'+urllib.parse.quote(slug(heading)) if heading else '')
+        def file_target(name):
+            if re.match(r'^[a-z][a-z0-9+.-]*:|^//',name,re.I):
+                return None
+            q=urllib.parse.unquote(name)
+            direct=vault.resolve(posixpath.normpath(posixpath.join(relative_to,q))) if not q.startswith('/') else None
+            source=direct if direct is not None and direct.is_file() else context.vault_file(q)
+            if source is None or not source.is_file() or not source.resolve().is_relative_to(vault.root) or source.is_relative_to(vault.root/'.cortex'):
+                return None
+            relative=vault.rel(source)
+            if source.suffix == '.md':
+                return relative if relative in selected else None
+            collected.add(relative)
+            if source.suffix.lower()=='.canvas':
+                sidecar=vault.root/'.cortex'/'canvas'/(relative+'.draw.json')
+                if sidecar.is_file() and sidecar.resolve().is_relative_to(vault.root):
+                    collected.add(vault.rel(sidecar))
+                drawing=vault.canvas_drawing(relative)
+                svg=relative+'.preview.svg'
+                while (vault.root/svg).exists():
+                    svg=svg[:-4]+' copy.svg'
+                generated[svg]=sketch_svg(drawing['strokes'],source.stem,drawing.get('options'))
+                return svg
+            return relative
+        def wiki(match):
+            emb,inner=match.groups()
+            source,pipe,label=inner.partition('|')
+            base,pound,heading=source.strip().partition('#')
+            target=context.find(base)
+            if target is not None:
+                if target.rel not in selected:
+                    return match[0]
+                return f'[{label or target.path.stem}]({link(target.rel,heading)})'
+            try:
+                local=file_target(base)
+            except ValueError:
+                return match[0]
+            if not local:
+                return match[0]
+            image='!' if emb and Path(local).suffix.lower() in IMG_EXT else ''
+            return f'{image}[{label or Path(base).name}]({link(local,heading)})'
+        def standard(match):
+            url=match[2]
+            path,_,heading=url.partition('#')
+            try:
+                local=file_target(path)
+            except ValueError:
+                return match[0]
+            return f'{match[1]}{link(local, heading)}{match[3]}' if local else match[0]
+        front = note.text[:len(note.text)-len(note.body)] if note.text.endswith(note.body) else ''
+        tokens=[front]
+        fence=None
+        body = note.body if front else note.text
+        for row in body.splitlines(keepends=True):
+            opening=FENCE_OPEN.match(row)
+            if opening:
+                marker=opening[1]
+                if fence and marker[0]==fence[0] and len(marker)>=len(fence):
+                    fence=None
+                elif fence is None:
+                    fence=marker
+                tokens.append(row)
+            elif fence:
+                tokens.append(row)
+            else:
+                parts=[]
+                last=0
+                for literal in CODE_SPAN.finditer(row):
+                    parts.append(WIKI.sub(wiki,regular_markdown.sub(standard,row[last:literal.start()])))
+                    parts.append(literal[0])
+                    last=literal.end()
+                parts.append(WIKI.sub(wiki,regular_markdown.sub(standard,row[last:])))
+                tokens.append(''.join(parts))
+        return ''.join(tokens)
+
+    with zipfile.ZipFile(output,'w',zipfile.ZIP_DEFLATED) as archive:
+        for entry in notes:
+            archive.writestr(entry.rel,note_text(entry))
+        for relative in sorted(collected):
+            archive.write(vault.resolve(relative),relative)
+        for name,svg in generated.items():
+            archive.writestr(name,svg)

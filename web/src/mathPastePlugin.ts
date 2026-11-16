@@ -1,6 +1,18 @@
 import {DOMParser,DOMSerializer,Fragment,Slice,type Node as PMNode,type Schema} from '@milkdown/kit/prose/model';
+import type {Step} from '@milkdown/kit/prose/transform';
 import type {EditorView} from '@milkdown/kit/prose/view';
 import {normaliseMathPaste,pastedMathParts} from './mathPaste';
+
+const undoConversions=new WeakMap<PMNode,{undo:Step[];paste:Step[]}>();
+export const canUndoMathConversion=(doc:PMNode)=>undoConversions.has(doc);
+export function undoMathConversion(view:EditorView){
+  const saved=undoConversions.get(view.state.doc);
+  if(!saved)return false;
+  const tr=view.state.tr;
+  for(const step of [...saved.undo,...saved.paste])tr.step(step);
+  undoConversions.delete(view.state.doc);
+  view.dispatch(tr.scrollIntoView());view.focus();return true;
+}
 
 /** Rich HTML is already parsed by ProseMirror: replace text, retaining links/lists/marks. */
 export function mathInPastedSlice(slice:Slice,schema:Schema):Slice|null {
@@ -44,6 +56,9 @@ export function pasteEquations(view:EditorView,event:ClipboardEvent,slice:Slice,
       result=DOMParser.fromSchema(view.state.schema).parseSlice(dom);
     }
     if(!result)return false;
-    view.dispatch(view.state.tr.replaceSelection(result).scrollIntoView());return true;
+    const converted=view.state.tr.replaceSelection(result);
+    const original=view.state.tr.replaceSelection(slice);
+    undoConversions.set(converted.doc,{undo:converted.steps.map((step,index)=>step.invert(converted.docs[index])).reverse(),paste:original.steps});
+    view.dispatch(converted.scrollIntoView());return true;
   }catch{return false; /* Fall back to the normal paste path without losing clipboard text. */}
 }

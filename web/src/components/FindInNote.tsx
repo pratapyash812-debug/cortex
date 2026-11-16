@@ -6,6 +6,11 @@ import './FindInNote.css';
 
 export function FindInNote({ editorRef, initialQuery, ready, onClose }: { editorRef: MutableRefObject<EditorHandle | null>; initialQuery: string; ready: boolean; onClose: () => void }) {
   const [query, setQuery] = useState(initialQuery);
+  const [replacing,setReplacing]=useState(false);
+  const [replacement,setReplacement]=useState('');
+  const [preview,setPreview]=useState<ReturnType<EditorHandle['previewReplace']>>(null);
+  const [notice,setNotice]=useState('');
+  const clearPreview=()=>{setPreview(null);setNotice('');};
   const [options, setOptions] = useState<FindOptions>({});
   const [result, setResult] = useState({ count: 0, index: -1 });
   const [offset, setOffset] = useState(8);
@@ -57,22 +62,45 @@ export function FindInNote({ editorRef, initialQuery, ready, onClose }: { editor
   const countLabel = result.count ? `${result.index + 1} of ${result.count}` : query ? 'No matches' : '';
 
   return (
-    <div ref={barRef} className="find-note" role="search" aria-label="Find in note" style={{ top: offset }} onKeyDown={event => {
+    <div ref={barRef} className="find-note" role="search" aria-label="Find in page" style={{ top: offset }} onKeyDown={event => {
       if (event.nativeEvent.isComposing) return;
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'g' && !event.altKey) { event.preventDefault(); move(event.shiftKey ? 'previous' : 'next'); }
       if (event.key === 'Escape' && !event.nativeEvent.isComposing) { event.preventDefault(); event.stopPropagation(); onClose(); }
     }}>
       <input id="find-note-query" ref={inputRef} type="search" value={query} aria-label="Find in note" placeholder="Find in note"
-        onChange={event => setQuery(event.target.value)}
+        onChange={event => {setQuery(event.target.value);clearPreview();}}
         onKeyDown={event => {
           if (event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); move(event.shiftKey ? 'previous' : 'next'); }
         }} />
-      <button type="button" className="find-note-button" aria-label="Match case" title="Match case" aria-pressed={!!options.matchCase} onClick={() => setOptions(old => ({...old, matchCase: !old.matchCase}))}><CaseSensitive size={17} /></button>
-      <button type="button" className="find-note-button" aria-label="Whole word" title="Whole word" aria-pressed={!!options.wholeWord} onClick={() => setOptions(old => ({...old, wholeWord: !old.wholeWord}))}><WholeWord size={17} /></button>
+      <button type="button" className="find-note-button" aria-label="Match case" title="Match case" aria-pressed={!!options.matchCase} onClick={() => {setOptions(old=>({...old,matchCase:!old.matchCase}));clearPreview();}}><CaseSensitive size={17} /></button>
+      <button type="button" className="find-note-button" aria-label="Whole word" title="Whole word" aria-pressed={!!options.wholeWord} onClick={() => {setOptions(old=>({...old,wholeWord:!old.wholeWord}));clearPreview();}}><WholeWord size={17} /></button>
       <span className="find-note-count" aria-live="polite">{countLabel}</span>
       <button type="button" className="find-note-button" aria-label="Previous match" title="Previous match (Shift+Enter or Ctrl/Cmd+Shift+G)" disabled={!result.count} onClick={() => move('previous')}><ArrowUp size={15} /></button>
       <button type="button" className="find-note-button" aria-label="Next match" title="Next match (Enter or Ctrl/Cmd+G)" disabled={!result.count} onClick={() => move('next')}><ArrowDown size={15} /></button>
+      <button type="button" className="btn ghost small" aria-expanded={replacing} onClick={()=>{setReplacing(value=>!value);clearPreview();}}>Replace</button>
       <button type="button" className="find-note-button" aria-label="Close find" title="Close (Escape)" onClick={onClose}><X size={15} /></button>
+      {replacing&&<div className="find-replace-tools">
+        <input aria-label="Replacement text" placeholder="Replace with" value={replacement} onChange={event=>{setReplacement(event.target.value);clearPreview();}}/>
+        <button className="btn ghost small" type="button" disabled={!ready||!query} onClick={()=>{
+          setNotice('');
+          const found=editorRef.current?.previewReplace(query,replacement,options)??null;
+          if(!found)setNotice('Preview is unavailable while the editor is busy.');
+          setPreview(found);
+        }}>Preview</button>
+        {preview&&<section className="find-replace-preview" aria-label="Replacement preview">
+          <p>{preview.count? `${preview.count} ${preview.count===1?'change':'changes'}`:'No changes'}</p>
+          {!!preview.examples.length&&<ul>{preview.examples.map((example,index)=><li key={index}>{example.before}<del>{example.match}</del>{replacement&&<ins>{replacement}</ins>}{example.after}</li>)}</ul>}
+          {!!preview.count&&<button className="btn small" type="button" onClick={()=>{
+            if(preview.apply()){
+              setNotice(`Replaced ${preview.count} ${preview.count===1?'match':'matches'}.`);
+              const found=editorRef.current?.findText(query,'first',options);
+              if(found)setResult(found);
+            }else setNotice('The page changed. Preview again before replacing.');
+            setPreview(null);
+          }}>Replace all</button>}
+        </section>}
+        {notice&&<div role="status" className="find-replace-notice">{notice}</div>}
+      </div>}
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { Selection, NodeSelection, type EditorState } from '@milkdown/kit/prose/state';
 import { Slice, type Node as PMNode } from '@milkdown/kit/prose/model';
+import type { FigureConfig } from './api';
 import type { EditorView } from '@milkdown/kit/prose/view';
 
 export type InsertKind = 'table' | 'figure' | 'image';
@@ -7,7 +8,10 @@ export interface InsertRequest {
   kind: InsertKind;
   path: string;
   figureId?: string;
-  applyMarkdown: (markdown: string, attachments?: Record<string, string>) => void;
+  figureInitial?: Partial<FigureConfig>;
+  tablePaste?: string;
+  tableDetail?: string;
+  applyMarkdown: (markdown: string, attachments?: Record<string, string>, tableCells?: string[][]) => void;
 }
 const FIGURE = /(?:^|\/)attachments\/figures\/figure-([a-f0-9]{32})\.svg(?:$|[?#])/;
 export function figureId(source: string): string | undefined { try { return FIGURE.exec(decodeURI(source))?.[1]; } catch { return undefined; } }
@@ -23,17 +27,17 @@ function figureAt(state: EditorState, position: number): {from:number;to:number;
 
 /** One owner, immutable document and captured caret; modal focus cannot change insertion position. */
 export function createInsertRequest<K extends InsertKind | 'canvas'>(view:EditorView,path:string,isCurrent:()=>boolean,kind:K,
-  parse:(markdown:string,attachments:Record<string,string>)=>PMNode|null,beforeDispatch:(attachments:Record<string,string>)=>void,position?:number):(Omit<InsertRequest,'kind'> & {kind:K})|null {
+  parse:(markdown:string,attachments:Record<string,string>)=>PMNode|null,beforeDispatch:(attachments:Record<string,string>)=>void,position?:number,range?:{from:number;to:number}):(Omit<InsertRequest,'kind'> & {kind:K})|null {
   if(view.isDestroyed||!isCurrent())return null;
   const state=view.state,original=state.doc;
-  const existing=position===undefined?(kind==='figure'&&state.selection instanceof NodeSelection?figureAt(state,state.selection.from):null):figureAt(state,position);
-  if(position!==undefined&&!existing)return null;
+  const existing=kind==='figure'?(position===undefined?(state.selection instanceof NodeSelection?figureAt(state,state.selection.from):null):figureAt(state,position)):null;
+  if(position!==undefined&&kind==='figure'&&!existing)return null;
   const selection=state.selection;
   if(!existing && (selection.$from.parent.type.spec.code || selection.$from.marks().some(m=>m.type.spec.code)))return null;
   if(kind==='canvas' && (selection.$from.depth!==1||selection.$to.depth!==1||selection.$from.parent.type.name!=='paragraph'))return null;
-  if(!existing && kind==='table' && selection.$from.depth && Array.from({length:selection.$from.depth},(_,i)=>selection.$from.node(i+1)).some(n=>n.type.name==='table'))return null;
-  if(!existing && selection instanceof NodeSelection && !selection.node.isTextblock)return null;
-  const from=existing?.from??selection.from,to=existing?.to??selection.to;
+  if(!existing && kind==='table' && !range && selection.$from.depth && Array.from({length:selection.$from.depth},(_,i)=>selection.$from.node(i+1)).some(n=>n.type.name==='table'))return null;
+  if(!existing && !range && position===undefined && selection instanceof NodeSelection && !selection.node.isTextblock)return null;
+  const from=existing?.from??range?.from??position??selection.from,to=existing?.to??range?.to??position??selection.to;
   let applied=false;
   return {kind,path,figureId:existing?.id,applyMarkdown(markdown,attachments={}) {
     if(applied)throw Error('This insertion was already applied.');

@@ -1,16 +1,17 @@
 /** Small, bounded numeric calculator for equation drafts. No eval, network or AI. */
 export interface SolutionStep { title: string; latex: string }
-export interface EquationAnswer { source: string; latex: string; text: string; approximate: boolean; completed: string; steps?: SolutionStep[]; working?: string }
+export interface EquationAnswer { source: string; latex: string; text: string; approximate: boolean; completed: string; decimal?: string; alternateExact?: string; steps?: SolutionStep[]; working?: string }
 
 const unsupported = 'Use a numerical calculation or a linear or quadratic equation in x. Equations with other variables, variable denominators and calculus are not supported yet.';
 
 export function solveEquation(input: string): EquationAnswer {
   const source = input.trim().replace(/=\s*$/, '').trim();
+  const calculation = source.replace(/(\d)(?:\{,\}|,)(?=\d)/g,'$1.');
   if (!source) throw new Error('Write a calculation first.');
   if (source.length > 512) throw new Error('This calculation is too long to auto-solve.');
   if (/\\(?:placeholder|prompt)\b|#\?/.test(source)) throw new Error('Fill in the empty boxes before solving.');
-  if (/(?:^|[^a-zA-Z\\])x(?![a-zA-Z])/.test(source)) return solveAlgebra(source);
-  const cleaned = source
+  if (/(?:^|[^a-zA-Z\\])x(?![a-zA-Z])/.test(source)) return solveAlgebra(calculation, source);
+  const cleaned = calculation
     .replace(/\\(?:left|right|displaystyle|textstyle)\b/g, '')
     .replace(/\\(?:,|;|:|!|quad\b|qquad\b| )/g, '')
     .replace(/\\(?:cdot|times)(?![a-zA-Z])|[·×]/g, '*')
@@ -125,11 +126,17 @@ export function solveEquation(input: string): EquationAnswer {
   };
   const value = check(expression());
   if (at !== tokens.length) throw new Error(unsupported);
+  // Reuse the exact rational evaluator when the expression uses rational arithmetic.
+  let alternateExact: string | undefined;
+  try {
+    const [exact] = parsePolynomial(calculation);
+    if (exact.d !== 1n) alternateExact = rText(exact);
+  } catch { /* The numeric result remains available. */ }
   // Keep exact safe-integer arithmetic; explicitly mark floating/rounded answers.
   const approximate = inexact || !Number.isSafeInteger(value);
   const text = Object.is(value, -0) ? '0' : approximate ? Number(value.toPrecision(12)).toString() : value.toString();
   const latex = text.replace(/e([+-]?\d+)$/, (_, exponent: string) => `\\times 10^{${Number(exponent)}}`);
-  return { source, latex, text, approximate, completed: `${source}${approximate ? '\\approx' : '='}${latex}` };
+  return { source, latex, text, approximate, alternateExact, completed: `${source}${approximate ? '\\approx' : '='}${latex}` };
 }
 
 // Exact rational coefficients avoid rounding away a term or inventing a root.
@@ -149,6 +156,7 @@ const mulR = (a: Rational, b: Rational) => rational(a.n * b.n, a.d * b.d);
 const divR = (a: Rational, b: Rational) => rational(a.n * b.d, a.d * b.n);
 const zero = () => rational(0n);
 const rLatex = (r: Rational): string => r.d === 1n ? String(r.n) : `${r.n < 0n ? '-' : ''}\\frac{${r.n < 0n ? -r.n : r.n}}{${r.d}}`;
+const decimalR = (r: Rational) => Number((Number(r.n) / Number(r.d)).toPrecision(12)).toString();
 const rText = (r: Rational) => r.d === 1n ? String(r.n) : `${r.n}/${r.d}`;
 const trimP = (p: Polynomial) => { while (p.length > 1 && !p[p.length-1].n) p.pop(); return p; };
 const addP = (a: Polynomial, b: Polynomial) => trimP(Array.from({length:Math.max(a.length,b.length)}, (_, i) => addR(a[i] ?? zero(), b[i] ?? zero())));
@@ -234,14 +242,14 @@ function parsePolynomial(source: string): Polynomial {
 }
 const integerSqrt = (n: bigint): bigint => { if (n < 2n) return n; let a=n,b=(a+1n)/2n; while(b<a) { a=b; b=(a+n/a)/2n; } return a; };
 
-function solveAlgebra(source: string): EquationAnswer {
-  const sides = source.split('=');
+function solveAlgebra(calculation: string, source: string): EquationAnswer {
+  const sides = calculation.split('=');
   if (sides.length !== 2 || !sides.every(s=>s.trim())) throw new Error('Include both sides of one equation, for example 2x + 3 = 11.');
   const left = parsePolynomial(sides[0]), right = parsePolynomial(sides[1]);
   const p = addP(left,right.map(negR)), c=p[0], b=p[1] ?? zero(), a=p[2] ?? zero();
   const steps: SolutionStep[] = [{title:'Expand brackets and collect like terms on each side.',latex:`${pLatex(left)}=${pLatex(right)}`},
     {title:'Subtract the right-hand side from both sides, then collect like terms.',latex:`${pLatex(p)}=0`}];
-  let latex: string, text: string, approximate=false;
+  let latex: string, text: string, approximate=false, decimal: string | undefined;
   if (!a.n && !b.n) {
     const identity = !c.n;
     latex = identity ? 'x\\in\\mathbb{R}' : '\\text{No solution}'; text = identity ? 'Every real value of x' : 'No solution';
@@ -250,6 +258,7 @@ function solveAlgebra(source: string): EquationAnswer {
     const value = divR(negR(c),b);
     steps.push({title:`${c.n < 0n ? 'Add' : 'Subtract'} ${rText(rational(c.n < 0n ? -c.n : c.n,c.d))} on both sides to isolate the x term.`,latex:`${pLatex([zero(),b])}=${rLatex(negR(c))}`});
     latex = `x=${rLatex(value)}`; text = `x = ${rText(value)}`;
+    if(value.d!==1n)decimal=`x ≈ ${decimalR(value)}`;
     steps.push({title:`Divide both sides by ${rText(b)}.`,latex});
     const substitute = (p: Polynomial) => p.reduce((v,coeff,i) => addR(v,mulR(coeff,i===0?rational(1n):i===1?value:mulR(value,value))),zero());
     steps.push({title:`Check: substitute x = ${rText(value)} into the original equation. Both sides match.`,latex:`${rLatex(substitute(left))}=${rLatex(substitute(right))}`});
@@ -268,6 +277,7 @@ function solveAlgebra(source: string): EquationAnswer {
         const delta=rational(sn,sd),one=divR(addR(negR(b),delta),twoA),two=divR(addR(negR(b),negR(delta)),twoA);
         latex=`x=${rLatex(one)}${delta.n ? `\\quad\\text{or}\\quad x=${rLatex(two)}` : ''}`;
         text=`x = ${rText(one)}${delta.n ? ` or x = ${rText(two)}` : ''}`;
+        if(one.d!==1n||two.d!==1n)decimal=`x ≈ ${decimalR(one)}${delta.n ? ` or x ≈ ${decimalR(two)}` : ''}`;
         steps.push({title:delta.n?'Simplify each of the two roots.':'The discriminant is zero, so there is one repeated root.',latex});
       } else {
         const bn=Number(b.n)/Number(b.d),an=Number(twoA.n)/Number(twoA.d),dn=Math.sqrt(Number(discriminant.n)/Number(discriminant.d));
@@ -283,5 +293,5 @@ function solveAlgebra(source: string): EquationAnswer {
   const completed=`${source}\\quad\\Rightarrow\\quad ${latex}`;
   // Generated labels contain only fixed English copy and rational numbers.
   const working=`\\begin{aligned}&${source}\\\\${steps.map(s=>`&\\text{${s.title.replace(/[{}\\]/g,'')}}\\\\&${s.latex}`).join('\\\\')}\\end{aligned}`;
-  return {source,latex,text,approximate,completed,steps,working};
+  return {source,latex,text,approximate,completed,steps,working,decimal};
 }

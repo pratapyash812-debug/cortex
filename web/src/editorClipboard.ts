@@ -1,6 +1,6 @@
 import type {EditorView} from '@milkdown/kit/prose/view';
 
-export type ClipboardAction = 'cut' | 'copy' | 'paste';
+export type ClipboardAction = 'cut' | 'copy' | 'paste' | 'pastePlain';
 
 async function withClipboardTimeout<T>(win: Window, request: Promise<T>): Promise<T> {
   let timer = 0;
@@ -22,7 +22,7 @@ export async function runClipboardAction(view: EditorView, action: ClipboardActi
   const targetIsCurrent = () => view.dom.isConnected && view.editable &&
     view.state.doc === doc && view.state.selection.eq(selection);
 
-  if (action !== 'paste') {
+  if (action !== 'paste' && action !== 'pastePlain') {
     if (selection.empty) return 'Select text first.';
     let copied = false;
     // WebViews can handle the editor's native copy event without an async permission prompt.
@@ -54,7 +54,7 @@ export async function runClipboardAction(view: EditorView, action: ClipboardActi
   let html = '';
   let text = '';
   const read = async () => {
-    if (!clipboard?.read) {
+    if (action === 'pastePlain' || !clipboard?.read) {
       text = await clipboard.readText();
       return;
     }
@@ -75,6 +75,7 @@ export async function runClipboardAction(view: EditorView, action: ClipboardActi
   const data = new DataTransfer();
   data.setData('text/plain', text);
   if (html) data.setData('text/html', html);
+  if(action==='pastePlain')data.setData('application/x-cortex-plain-text','1');
   const event = new ClipboardEvent('paste', {clipboardData: data});
   view.focus();
   const inserted = html ? view.pasteHTML(html, event) : view.pasteText(text, event);

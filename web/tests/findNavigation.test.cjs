@@ -10,7 +10,7 @@ const ready = (async () => {
     import('@milkdown/kit/prose/state'), import('@milkdown/kit/prose/view'),
     import('@milkdown/kit/prose/model'), import('@milkdown/kit/utils'), import('@milkdown/kit/prose/history'),
   ]);
-  const imports = { '@milkdown/kit/prose/state': state, '@milkdown/kit/prose/view': view, '@milkdown/kit/prose/model': model, '@milkdown/kit/utils': utils };
+  const imports = { '@milkdown/kit/prose/state': state, '@milkdown/kit/prose/view': view, '@milkdown/kit/prose/model': model, '@milkdown/kit/utils': utils, '@milkdown/kit/prose/history': history };
   const cache = new Map();
   function load(file) {
     if (cache.has(file)) return cache.get(file).exports;
@@ -31,6 +31,25 @@ const ready = (async () => {
   });
   return { ...state, ...history, ...plugin, schema };
 })();
+
+test('replace all rejects a stale preview and each accepted replacement is one undo step',async()=>{
+  const {EditorState,history,undo,replacementPreview,schema}=await ready;
+  let state=EditorState.create({schema,doc:schema.node('doc',null,[
+    schema.node('paragraph',null,[schema.text('one '),schema.text('ONE',[schema.marks.strong.create()])]),
+    schema.node('paragraph',null,[schema.text('one two')]),
+  ]),plugins:[history()]});
+  const view={get state(){return state;},editable:true,dispatch(tr){state=state.apply(tr);}};
+  const preview=replacementPreview(view,'one','two');
+  assert.equal(preview.count,3);
+  assert.equal(preview.examples[1].match,'ONE');
+  view.dispatch(state.tr.insertText('Original ',1,1));
+  assert.equal(preview.apply(),false);
+  const next=replacementPreview(view,'one','two');
+  assert.equal(next.apply(),true);
+  assert.equal(state.doc.textBetween(0,state.doc.content.size,'\n'),'Original two two\ntwo two');
+  assert.equal(undo(state,view.dispatch),true);
+  assert.equal(state.doc.textBetween(0,state.doc.content.size,'\n'),'Original one ONE\none two');
+});
 
 test('a far-away match is centered inside the unobscured reading area', async () => {
   const { findScrollTarget } = await ready;

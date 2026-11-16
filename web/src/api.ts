@@ -14,6 +14,7 @@ export interface NoteInfo {
   /** Hash of the note body returned by GET /api/note, used for conditional text saves. */
   revision?: string;
   aliases?: string[];
+  hasAttachments?: boolean;
   /** Present when automations ran because of this change. */
   automations?: AutomationRun[];
 }
@@ -46,7 +47,8 @@ export interface SavedTab { id: string; kind: 'note' | 'canvas' | 'graph' | 'bas
 export interface SplitState { tab: string; ratio: number }
 export interface Workspace { tabs: SavedTab[]; active?: string; split: SplitState | null }
 /** Each save carries only the parts it changes; the server keeps the rest. null removes a part. */
-export interface AppState { tabs?: SavedTab[]; active?: string | null; sort?: string; split?: SplitState | null; workspaces?: Record<string, Workspace> }
+import type {NotebookPreferences} from './notebookVisits';
+export interface AppState { notebookPreferences?: NotebookPreferences; tabs?: SavedTab[]; active?: string | null; sort?: string; split?: SplitState | null; workspaces?: Record<string, Workspace> }
 export interface ImageFile { path: string; name: string; url: string; modified: number }
 export interface BulkResult { changed: number; unchanged: number; failed: { path: string; error: string }[]; automations?: AutomationRun[] }
 export interface Restored { path: string; kind?: 'folder' | 'canvas' }
@@ -158,8 +160,9 @@ export interface SyncVault { id: string; name: string; encrypted: boolean }
 export interface SyncConnect { folder: string; vault_id?: string; passphrase?: string; remember?: boolean; device_name?: string; interval?: number }
 export interface FigureConfig {
   kind: 'function' | 'line' | 'bar' | 'diagram'; title: string; theme: 'light' | 'dark';
-  numberFormat?: 'english' | 'decimal-comma'; expressions?: string[]; xMin?: number; xMax?: number; data?: string; steps?: string[]; xLabel?: string; yLabel?: string;
+  numberFormat?: 'english' | 'decimal-comma'; expressions?: string[]; xMin?: number; xMax?: number; yMin?: number; yMax?: number; caption?: string; data?: string; steps?: string[]; xLabel?: string; yLabel?: string;
 }
+export interface ChartValues { columns: string[]; rows: (string | number | null)[][] }
 export interface FigureSaved { id: string; image: string; markdown: string; config: FigureConfig }
 export type ImportFormat = 'folder' | 'notion' | 'enex' | 'html' | 'docx' | 'course' | 'markdown' | 'ics';
 export type HighlightColor = 'yellow' | 'green' | 'blue' | 'pink' | 'orange';
@@ -167,7 +170,9 @@ export type HighlightColor = 'yellow' | 'green' | 'blue' | 'pink' | 'orange';
 export interface PdfRect { x: number; y: number; w: number; h: number }
 export interface PdfHighlight { id: string; page: number; color: HighlightColor; rects: PdfRect[]; text?: string; note?: string }
 /** One freehand stroke on a canvas. `points` are flat [x0,y0,x1,y1,…] in canvas coordinates. Kept in .cortex, not in the .canvas file. */
-export interface CanvasStroke { id: string; color: string; width: number; points: number[] }
+export interface CanvasStroke { id: string; color: string; width: number; points: number[]; pressure?: number[] }
+export interface CanvasLabel {x: number; y: number; text: string}
+export interface CanvasOptions {grid: boolean; axes: boolean; xLabel?: string; yLabel?: string; axisStep?: number; caption?: string; locked?: boolean; labels?: CanvasLabel[] }
 export interface ImportResult { written: number; folder: string; stats: Record<string, number>; warnings?: string[] }
 
 // ---- tasks, blocks, reminders, bookmarks -------------------------------------------------------------------
@@ -248,6 +253,7 @@ const enc = encodeURIComponent;
 /** One sheet (tab) of a note. The notebook's primary note is always its first sheet. */
 export interface Sheet { path: string; title: string }
 /** The sheets of a note. A plain note reports itself as the only sheet with isNotebook false. */
+export interface PageMoveReceipt {path:string;target:string;previous:string|null;position:number}
 export interface NotebookView { primary: string; isNotebook: boolean; sheets: Sheet[] }
 
 export const api = {
@@ -256,7 +262,7 @@ export const api = {
   backupStatus:()=>call<BackupStatus>('GET','/api/backups/status'),
   keepDraft:(draft:{path:string;content:string;baseRevision?:string})=>call<{id:string}>('POST','/api/recovery/draft',draft,AbortSignal.timeout(10000)),
   runBackup:()=>call<BackupStatus&{accepted:boolean}>('POST','/api/backups/run',{}),
-  previewFigure: (config: FigureConfig) => call<{config: FigureConfig; svg: string; summary: string}>('POST', '/api/figures/preview', config),
+  previewFigure: (config: FigureConfig) => call<{config: FigureConfig; svg: string; summary: string; inspection?: ChartValues}>('POST', '/api/figures/preview', config),
   saveFigure: (path: string, config: FigureConfig) => call<FigureSaved>('POST', '/api/figures', {path, config}),
   figure: (id: string) => call<{id: string; config: FigureConfig}>('GET', `/api/figures?id=${enc(id)}`),
 
@@ -264,15 +270,19 @@ export const api = {
   notebook: (path: string) => call<NotebookView>('GET', `/api/notebook?path=${enc(path)}`),
   createNotebook: (title: string) => call<Note>('POST', '/api/notebook/create', { title }),
   createSection: (path: string, title: string) => call<NotebookView & {created:string}>('POST','/api/notebook/section',{path,title}),
-  movePage: (path:string,target:string)=>call<NotebookView>('POST','/api/notebook/move',{path,target}),
+  undoPageMove:(receipt:PageMoveReceipt)=>call<{ok:true}>('POST','/api/notebook/undo-move',receipt),
+  duplicatePage:(path:string)=>call<Note>('POST','/api/notebook/duplicate',{path}),
+  movePages:(paths:string[],target:string)=>call<NotebookView&{moved:number}>('POST','/api/notebook/move-many',{paths,target}),
+  movePage: (path:string,target:string)=>call<NotebookView&{undo?:PageMoveReceipt}>('POST','/api/notebook/move',{path,target}),
   addSheet: (path: string, title?: string) => call<NotebookView & { created: string; note?: Note }>('POST', '/api/notebook', { path, ...(title ? { title } : {}) }),
   reorderSheets: (primary: string, order: string[]) => call<NotebookView>('POST', '/api/notebook/reorder', { primary, order }),
   removeSheet: (path: string) => call<NotebookView>('DELETE', `/api/notebook/sheet?path=${enc(path)}`),
   note: (path: string) => call<Note>('GET', `/api/note?path=${enc(path)}`),
   save: (path: string, content: string, meta?: Record<string, unknown>, baseRevision?: string) => call<NoteInfo>('PUT', '/api/note', { path, content, meta, ...(baseRevision !== undefined ? { baseRevision } : {}) }, AbortSignal.timeout(10000)),
   create: (folder: string, title: string, content = '') => call<Note>('POST', '/api/note', { folder, title, content }),
-  remove: (path: string) => call('DELETE', `/api/note?path=${enc(path)}`),
+  remove: (path: string) => call<{ok:true;id:string}>('DELETE', `/api/note?path=${enc(path)}`),
   move: (from: string, to: string) => call<Note>('POST', '/api/move', { from, to }),
+  revealFolder:(path:string)=>call<{ok:true}>('POST','/api/folder/reveal',{path}),
   newFolder: (path: string) => call('POST', '/api/folder', { path }),
   trashFolder: (path: string) => call<{ trashed: number }>('DELETE', `/api/folder?path=${enc(path)}&trash=1`),
   moveFolder: (from: string, to: string) => call<{ path: string; moved: number; rewritten: number }>('POST', '/api/folder/move', { from, to }),
@@ -349,7 +359,7 @@ export const api = {
   clip: (url: string) => call<Note & { folder: string }>('POST', '/api/clip', { url }),
   pdfHighlights: (path: string) => call<{ highlights: PdfHighlight[] }>('GET', `/api/pdf/highlights?path=${enc(path)}`),
   savePdfHighlights: (path: string, highlights: PdfHighlight[]) => call<{ highlights: PdfHighlight[] }>('PUT', '/api/pdf/highlights', { path, highlights }),
-  canvasDrawing: (path: string) => call<{ strokes: CanvasStroke[]; options?: {grid:boolean;axes:boolean} }>('GET', `/api/canvas/drawing?path=${enc(path)}`),
+  canvasDrawing: (path: string) => call<{ strokes: CanvasStroke[]; options?: CanvasOptions }>('GET', `/api/canvas/drawing?path=${enc(path)}`),
   saveCanvasDrawing: (path: string, strokes: CanvasStroke[]) => call<{ strokes: CanvasStroke[] }>('PUT', '/api/canvas/drawing', { path, strokes }),
   transcribeStatus: () => call<{ available: boolean }>('GET', '/api/transcribe/status'),
   transcribe: (path: string) => call<{ text: string }>('POST', '/api/transcribe', { path }),

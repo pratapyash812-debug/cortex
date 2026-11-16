@@ -4,7 +4,7 @@ Extraction happens in a low-priority owned subprocess so foreground edits can
 cancel a slow/malformed PDF without blocking typing or retaining stale hits.
 """
 from __future__ import annotations
-import contextlib,importlib.metadata,importlib.util,json,os,queue,re,sqlite3,subprocess,sys,tempfile,threading,time
+import contextlib,importlib.metadata,importlib.util,json,os,queue,re,sqlite3,subprocess,sys,tempfile,threading,time,unicodedata
 from pathlib import Path
 # Embedded Python's ._pth intentionally omits the invoked script's directory.
 # The worker must resolve its own sibling modules before loading PDF packages.
@@ -18,6 +18,21 @@ WORKER_SECONDS=90.0
 IDLE_SECONDS=10.0
 WORKER_MEMORY_BYTES=768*1024**2
 _memory_api=None
+_FOLD_EXTRAS=str.maketrans({'ø':'o','æ':'ae','œ':'oe','ł':'l'})
+
+def search_fold(text):
+    decomposed=unicodedata.normalize('NFKD',text.casefold())
+    return ''.join(char for char in decomposed if not unicodedata.category(char).startswith('M')).translate(_FOLD_EXTRAS)
+
+def query_words(query):
+    return list(dict.fromkeys(re.sub(r'\s+',' ',(phrase or word).strip()) for phrase,word in re.findall(r'"([^"]+)"|([^\s"]+)',query) if (phrase or word).strip()))[:12]
+
+def source_offset(text,offset):
+    if offset<0:return offset
+    for index,char in enumerate(text):
+        offset-=len(search_fold(char))
+        if offset<0:return index
+    return len(text)
 
 def worker_memory(process):
     """Best-effort private-memory guard for our own Windows subprocess only."""
@@ -137,48 +152,65 @@ class DocumentIndex:
     def _summary(self):
         with self._db_lock,self._db() as db:
             rows=list(db.execute('''SELECT d.*,COUNT(p.page) AS indexed,SUM(CASE WHEN length(trim(p.text))>0 THEN 1 ELSE 0 END) AS searchable FROM documents d LEFT JOIN pages p ON p.path=d.path GROUP BY d.path ORDER BY d.path'''))
-        files=[{'path':r['path'],'title':Path(r['path']).stem,'state':r['state'],'indexedPages':r['indexed'],'totalPages':r['total'],'searchablePages':r['searchable'] or 0,'reason':r['reason']} for r in rows]
+        files=[{'path':r['path'],'title':Path(r['path']).stem,'state':r['state'],'indexedPages':r['indexed'],'totalPages':r['total'],'searchablePages':r['searchable'] or 0,'finished':bool(r['finished']),'reason':r['reason']} for r in rows]
         available=package_root() is not None
         return {'available':available,'running':self._running,'totalFiles':len(files),'indexedFiles':sum(f['searchablePages']>0 for f in files),'indexedPages':sum(f['indexedPages'] for f in files),'complete':available and all(f['state']=='complete' for f in files),'indexingComplete':all(r['finished'] for r in rows),'noOCR':True,'files':files,'error':self._error if available else 'PDF text extraction is unavailable in this installation.'}
 
     def status(self):
         self._scan();return self._summary()
 
-    def search(self,query,path=None):
+    def search(self,query,path=None,*,subject='',fold=False):
         if not isinstance(query,str) or len(query)>200:raise ValueError('Search text must be at most 200 characters')
         if path:
             source=self.vault.resolve(path)
             if not source.is_file() or source.suffix.lower()!='.pdf':raise ValueError('Choose a PDF source path')
         self.note_changed()  # foreground lookup takes priority over extraction
         self._scan(verify=False)
-        words=list(dict.fromkeys(query.casefold().split()))[:12];hits=[]
+        if subject and (len(subject)>255 or subject in ('.','..') or '/' in subject or '\\' in subject):raise ValueError('Choose a subject name')
+        words=query_words(search_fold(query) if fold else query.casefold());hits=[]
+        prefix=subject+'/' if subject else ''
         if words:
-            clauses=' AND '.join("p.normalised LIKE ? ESCAPE '\\'" for _ in words)
+            column='search_fold(p.normalised)' if fold else 'p.normalised'
+            clauses=' AND '.join(f"{column} LIKE ? ESCAPE '\\'" for _ in words)
             parameters=['%'+word.replace('\\','\\\\').replace('%','\\%').replace('_','\\_')+'%' for word in words]
             if path:clauses+=' AND p.path=?';parameters.append(path)
+            if prefix:clauses+=' AND substr(p.path,1,?)=?';parameters.extend((len(prefix),prefix))
             sql='SELECT p.path,p.page,p.text FROM pages p JOIN documents d ON d.path=p.path WHERE d.sha IS NOT NULL AND '+clauses+' ORDER BY p.path,p.page LIMIT 51'
+            def result_rows():
+                with self._db_lock,self._db() as db:
+                    if fold:db.create_function('search_fold',1,search_fold,deterministic=True)
+                    return list(db.execute(sql,parameters))
             verified=set()
             for _ in range(3):
-                with self._db_lock,self._db() as db:rows=list(db.execute(sql,parameters))
+                rows=result_rows()
                 needed={row['path'] for row in rows}-verified
                 if not needed:break
                 self._scan(verify=True,only=needed)
                 verified.update(needed)
-            with self._db_lock,self._db() as db:rows=[row for row in db.execute(sql,parameters) if row['path'] in verified]
+            rows=[row for row in result_rows() if row['path'] in verified]
             for row in rows[:50]:
-                text=re.sub(r'\s+',' ',row['text']).strip();at=text.casefold().find(words[0]);start=max(0,at-70)
+                text=re.sub(r'\s+',' ',row['text']).strip()
+                at=source_offset(text,search_fold(text).find(words[0])) if fold else text.casefold().find(words[0]);start=max(0,at-70)
                 snippet=('…' if start else '')+text[start:start+240]+('…' if len(text)>start+240 else '')
                 hits.append({'path':row['path'],'title':Path(row['path']).stem,'page':row['page'],'snippet':snippet})
-        return {**self._summary(),'hits':hits,'truncated':bool(words and len(rows)>50)}
+        status=self._summary()
+        if prefix:
+            files=[file for file in status['files'] if file['path'].startswith(prefix)]
+            status.update(files=files,totalFiles=len(files),indexedFiles=sum(file['searchablePages']>0 for file in files),
+                          indexedPages=sum(file['indexedPages'] for file in files),complete=all(file['state']=='complete' for file in files),
+                          indexingComplete=all(file['finished'] for file in files))
+        return {**status,'hits':hits,'truncated':bool(words and len(rows)>50)}
 
     def _loop(self):
         while not self._stop.is_set():
             self._wake.wait(.5);self._wake.clear()
             if time.monotonic()-self._activity<self.idle or time.monotonic()<self._next_scan:continue
+            generation=self._generation
             try:self.index_once(verify=False)
-            except (snap.InputChanged,snap.WorkCancelled):pass
+            except snap.WorkCancelled:continue
+            except snap.InputChanged:pass
             except Exception as error:self._error=f'PDF indexing paused: {error}'
-            self._next_scan=time.monotonic()+30
+            if generation==self._generation:self._next_scan=time.monotonic()+30
 
     def index_once(self,verify=True):
         if not self._run.acquire(blocking=False):return

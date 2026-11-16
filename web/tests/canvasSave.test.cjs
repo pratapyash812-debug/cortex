@@ -100,6 +100,38 @@ test('backup waits for drawing acknowledgement, including a writer whose widget 
  let complete=false;const pending=f.flushSaved().then(()=>complete=true);await flush();assert.equal(complete,false);assert.equal(f.puts.length,1);
  gate.resolve(response({ok:true}));await pending;assert.equal(complete,true);assert.equal(f.close(),false);
 });
+test('Space temporarily pans and releases back to drawing',async t=>{
+ const f=fixture(t),ui=f.mount({embedded:true});await ui.ready();
+ ui.capture().onKeyDown({code:'Space',preventDefault(){}});
+ assert.equal(ui.capture()['data-tool'],'select');
+ ui.draw();await f.timers();assert.equal(f.puts.length,0);
+ ui.capture().onKeyUp({code:'Space',preventDefault(){}});
+ ui.draw();await f.timers();assert.equal(f.puts.length,1);
+});
+
+test('stylus pressure, locked options and page read-only do not lose prior strokes',async t=>{
+ const f=fixture(t),ui=f.mount({embedded:true});await ui.ready();
+ const p=(x,y,pressure)=>({...pointer(x,y),pointerType:'pen',pressure});
+ ui.capture().onPointerDown(p(400,300,.2));ui.capture().onPointerMove(p(420,320,.8));ui.capture().onPointerUp(p(420,320,0));
+ await f.timers();assert.deepEqual(f.puts[0].body.strokes[0].pressure,[.2,.8]);
+ ui.click('Lock sketch');await f.timers();assert.equal(f.puts.at(-1).body.options.locked,true);
+ ui.draw();await f.timers();assert.equal(f.puts.length,2);
+ const read=f.mount({forceReadOnly:true,path:'Other.canvas',onRemove(){throw Error('Protected');}});await read.ready();
+ assert.equal(nodes(read.render(),node=>node.type==='button' && node.props['aria-label']==='Remove sketch from note').length,0);
+ read.draw();await f.timers();assert.equal(f.puts.length,2);
+});
+
+test('two fingers pinch without committing the first tentative mark',async t=>{
+ const f=fixture(t),ui=f.mount({embedded:true});await ui.ready();
+ const touch=(x,y,id)=>({...pointer(x,y,id),pointerType:'touch'});
+ ui.capture().onPointerDown(touch(230,160,1));
+ ui.capture().onPointerDown(touch(310,200,2));
+ ui.capture().onPointerMove(touch(360,250,2));
+ ui.capture().onPointerUp(touch(360,250,2));ui.capture().onPointerUp(touch(230,160,1));
+ await f.timers();assert.equal(f.puts.length,0);
+ ui.draw();await f.timers();assert.equal(f.puts.length,1);
+});
+
 test('a failed drawing blocks the backup barrier until its retained draft saves',async t=>{
  const f=fixture(t,{put:()=>response({error:'Disk full'},false)}),ui=f.mount({embedded:true});await ui.ready();ui.draw();
  await assert.rejects(f.flushSaved(),/Disk full/);assert.equal(f.close(),true);f.options.put=()=>response({ok:true});await f.flushSaved();assert.equal(f.close(),false);

@@ -134,7 +134,7 @@ export function clearTextFormatting(view: EditorView): boolean {
   const {state} = view;
   const {from, to, empty} = state.selection;
   const tr = state.tr;
-  for (const name of ['strong', 'emphasis', 'strike_through', 'cortex_underline', 'cortex_highlight', 'cortex_text_style']) {
+  for (const name of ['strong', 'emphasis', 'strike_through', 'cortex_underline', 'cortex_highlight', 'cortex_text_style', 'cortex_superscript', 'cortex_subscript']) {
     const type = state.schema.marks[name];
     if (!type) continue;
     if (empty) tr.removeStoredMark(type);

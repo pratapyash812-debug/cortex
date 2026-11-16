@@ -400,7 +400,7 @@ test('failed autosave retries automatically and keeps the latest unsaved text in
     await drainPromises();
   }
   assert.deepEqual(saves,['First edit','Latest edit','Latest edit','Latest edit']);
-  assert.deepEqual(drafts,[{path:'A.md',content:'Latest edit',baseRevision:'rev'}]);
+  assert.deepEqual(drafts,[{path:'A.md',content:'First edit',baseRevision:'rev'},{path:'A.md',content:'Latest edit',baseRevision:'rev'}]);
   assert.match(runtime.render().saveError,/edits is in Recovery/);
 });
 

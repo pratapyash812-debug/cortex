@@ -31,6 +31,23 @@ class SmartSearchFolderTests(unittest.TestCase):
     def paths(self, query):
         return {hit['path'] for hit in self.vault.search(query)}
 
+    def test_subject_titles_dates_and_quoted_phrases_work_together(self):
+        (self.root/'Økonomi.md').write_text('Trade costs', encoding='utf-8')
+        (self.root/'Work'/'Voice.md').write_text('dansk økonomi', encoding='utf-8')
+        self.assertEqual(
+            {item['path'] for item in self.vault.search('"dansk okonomi"', fold=True, subject='Work')},
+            {'Work/Voice.md'},
+        )
+        self.assertEqual(
+            {item['path'] for item in self.vault.search('okonomi', fold=True, titles=True)},
+            {'Økonomi.md'},
+        )
+        stamp = (self.root/'Økonomi.md').stat().st_mtime
+        self.assertEqual(len(self.vault.search('okonomi', fold=True, titles=True, edited_from=str(stamp-.1))),1)
+        self.assertEqual(self.vault.search('okonomi', fold=True, titles=True, edited_before=str(stamp)),[])
+        with self.assertRaises(ValueError):
+            self.vault.search('okonomi', edited_before='inf')
+
     def test_folder_matches_only_the_selected_directory_and_descendants(self):
         self.assertEqual(self.paths('folder:"Work"'), {'Work/Review.md', 'Work/Sub/Plan.md'})
         self.assertEqual(self.paths('folder:"Work/Sub"'), {'Work/Sub/Plan.md'})

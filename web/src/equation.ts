@@ -7,7 +7,7 @@ export interface EquationRequest {
   initialLatex: string;
   initialDisplay: boolean;
   /** Throws before mutation when the owning editor/document was replaced. */
-  apply: (latex: string, display: boolean) => void;
+  apply: (latex: string, display: boolean, append?: boolean) => void;
 }
 
 interface EquationTarget {
@@ -93,11 +93,14 @@ export function createEquationRequest(view: EditorView, path: string, isCurrent:
   const target = position === undefined ? equationTarget(view.state) : equationAtPosition(view.state.doc, position);
   if (!target) return null;
   const originalDoc = view.state.doc;
-  return { path, initialLatex: target.initialLatex, initialDisplay: target.initialDisplay, apply(latex, display) {
+  return { path, initialLatex: target.initialLatex, initialDisplay: target.initialDisplay, apply(latex, display, append) {
     if (view.isDestroyed || !isCurrent() || view.state.doc !== originalDoc) {
       throw new Error('This note changed or was replaced while the equation editor was open. Copy your equation, reopen it at the intended position, and try again.');
     }
-    const tr = equationTransaction(view.state, target, latex, display);
+    const boundary = originalDoc.resolve(target.to);
+    const after = boundary.depth ? boundary.after(1) : target.to;
+    const destination = append && target.initialLatex ? { ...target, from: after, to: after, kind: 'selection' as const, marks: [] } : target;
+    const tr = equationTransaction(view.state, destination, latex, append || display);
     view.dispatch(tr);
     view.focus();
   } };

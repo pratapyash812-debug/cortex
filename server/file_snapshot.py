@@ -45,6 +45,7 @@ def local_files(root:Path,include_metadata=True,suffix=None):
         rel=p.relative_to(root).as_posix();parts=Path(rel).parts
         if not include_metadata and any(part.startswith('.') for part in parts):continue
         if p.name=='writer.lock' or p.name.endswith(('.tmp','.sqlite3-wal','.sqlite3-shm')):continue
+        if len(parts)>1 and parts[0]=='.cortex' and parts[1].startswith('.import-'):continue
         if parts[:2] in (('.cortex','search'),('.cortex','document-index'),('.cortex','cache'),('.cortex','ai'),('.cortex','pdf-index')):continue
         if p.name.startswith('~$'):continue
         try:found[rel]=identity(p)

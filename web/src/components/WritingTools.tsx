@@ -66,7 +66,7 @@ function FontChoices({format, state}: {format: ApplyFormat; state?: FormattingSt
   return <>
     <select aria-label="Font" title="Font for selected text" value={state?.font ?? ''} onChange={event => format({text: {font: event.target.value as TextStyle['font']}})}>
       <option value="" disabled>{state ? 'Mixed fonts' : 'Font'}</option>
-      <option value="default">Default font</option><option value="sans">Sans serif</option><option value="serif">Georgia</option><option value="mono">Monospace</option>
+      <option value="default">Default font</option><option value="sans" style={{fontFamily:'sans-serif'}}>Sans serif</option><option value="serif" style={{fontFamily:'Georgia'}}>Georgia</option><option value="mono" style={{fontFamily:'monospace'}}>Monospace</option>
     </select>
     <select aria-label="Font size" title="Font size for selected text" value={state?.size ?? ''} onChange={event => format({text: {size: Number(event.target.value)}})}>
       <option value="" disabled>{state ? 'Mixed sizes' : 'Size'}</option><option value="0">Default size</option>
@@ -74,7 +74,7 @@ function FontChoices({format, state}: {format: ApplyFormat; state?: FormattingSt
     </select>
     <select aria-label="Text colour" title="Text colour" value={state?.colour ?? ''} onChange={event => format({text: {colour: event.target.value as TextStyle['colour']}})}>
       <option value="" disabled>{state ? 'Mixed colours' : 'Colour'}</option>
-      {TEXT_COLOURS.map(colour => <option key={colour} value={colour}>{colour === 'default' ? 'Default colour' : colour[0].toUpperCase() + colour.slice(1)}</option>)}
+      {TEXT_COLOURS.map(colour => <option key={colour} value={colour} style={{color:colour==='default'?undefined:`var(--writing-${colour})`}}>{colour === 'default' ? 'Default colour' : colour[0].toUpperCase() + colour.slice(1)}</option>)}
     </select>
   </>;
 }
@@ -91,13 +91,15 @@ const clipboardTools = [
   {key: 'cut', label: 'Cut', shortcut: 'Ctrl+X', Icon: Scissors},
   {key: 'copy', label: 'Copy', shortcut: 'Ctrl+C', Icon: Copy},
   {key: 'paste', label: 'Paste', shortcut: 'Ctrl+V', Icon: ClipboardPaste},
+  {key: 'pastePlain', label: 'Paste as plain text', shortcut: 'Plain text', Icon: ClipboardPaste},
 ] as const;
 
-export function FloatingWritingTools({popup, toolbar, format, clipboard}: {
+export function FloatingWritingTools({popup, toolbar, format, clipboard,onSearchSelection}: {
   popup: FormattingPopup;
   toolbar: RefObject<HTMLDivElement | null>;
   format: ApplyFormat;
   clipboard: (action: ClipboardAction) => void;
+  onSearchSelection?:()=>void;
 }) {
   const {anchor, minTop, maxBottom, contextMenu, formatting} = popup;
   useLayoutEffect(() => {
@@ -137,10 +139,11 @@ export function FloatingWritingTools({popup, toolbar, format, clipboard}: {
         {formatButtons(lists.slice(0, 3), format, formatting)}
         {formatButtons(selectionTools, format, formatting)}
       </div>
+      {onSearchSelection&&formatting.hasSelection&&<div className="floating-writing-row"><button type="button" className="quick-clipboard-action" onMouseDown={event=>event.preventDefault()} onClick={onSearchSelection}>Search selected text</button></div>}
       {contextMenu && <div className="floating-writing-row clipboard-tools" role="group" aria-label="Clipboard">
         {clipboardTools.map(({key, label, shortcut, Icon}) =>
           <button type="button" className="quick-clipboard-action" key={key} title={shortcut}
-            disabled={key !== 'paste' && !formatting.hasSelection}
+            disabled={(key==='cut'||key==='copy')&&!formatting.hasSelection}
             onMouseDown={event => event.preventDefault()} onClick={() => clipboard(key)}><Icon size={15}/>{label}</button>
         )}
       </div>}
@@ -149,13 +152,14 @@ export function FloatingWritingTools({popup, toolbar, format, clipboard}: {
   );
 }
 
-export function WritingTools({format, meta, onStyle, onError, state, onShortcuts, wide, onWidth}: {
+export function WritingTools({format, meta, onStyle, onError, state, onShortcuts, wide, onWidth, onSpelling}: {
   format: (action: FormatAction) => void;
   meta: Record<string, unknown>;
   state?: FormattingState;
   onShortcuts: () => void;
   wide: boolean;
   onWidth: (wide: boolean) => void;
+  onSpelling: (language: 'system'|'en'|'da') => void;
   onStyle: (style: PageStyle) => Promise<void>;
   onError: (error: unknown) => void;
 }) {
@@ -184,12 +188,25 @@ export function WritingTools({format, meta, onStyle, onError, state, onShortcuts
         <div className="writing-choices" role="group" aria-label="Font and colour"><FontChoices format={format} state={state}/></div>
         <div className="writing-format" role="group" aria-label="Lists and indentation" data-ribbon-group>{formatButtons(lists,format,state,true)}</div>
         <div className="writing-format" role="group" aria-label="Paragraph alignment" data-ribbon-group>{formatButtons(alignment,format,state,true)}</div>
+        <div className="writing-extra-commands">
+          <button type="button" onClick={()=>format('superscript')} aria-pressed={state?.marks.superscript}>Superscript</button>
+          <button type="button" onClick={()=>format('subscript')} aria-pressed={state?.marks.subscript}>Subscript</button>
+          <button type="button" onClick={()=>format('copyFormat')}>Copy formatting</button>
+          <button type="button" onClick={()=>format('applyFormat')}>Apply copied formatting</button>
+          <button type="button" onClick={()=>format('matchFormat')}>Match nearby formatting</button>
+          <button type="button" onClick={()=>format('restartNumbering')} disabled={state?.marks.numbered!==true}>Restart numbering</button>
+          <button type="button" onClick={()=>format('continueNumbering')} disabled={state?.marks.numbered!==true}>Continue numbering</button>
+          <button type="button" onClick={()=>format('nextUnchecked')}>Next unchecked item</button>
+        </div>
       </div>
     </details>
     <details className="lean-menu ribbon-page-menu"><summary>Page</summary>
       <div className="page-appearance">
         <label>Writing width<select aria-label="Writing width" value={wide?'wide':'reading'} onChange={event=>onWidth(event.target.value==='wide')}>
           <option value="reading">Readable width</option><option value="wide">Full width</option>
+        </select></label>
+        <label>Spelling language<select aria-label="Spelling language" value={typeof meta.spellingLanguage==='string'?meta.spellingLanguage:'system'} onChange={event=>onSpelling(event.target.value as 'system'|'en'|'da')}>
+          <option value="system">System default</option><option value="en">English</option><option value="da">Danish</option>
         </select></label>
         <label>Page font<select aria-label="Page font" value={style.font} disabled={saving} onChange={event => void change({...style, font: event.target.value as PageStyle['font']})}>
           <option value="default">Default</option><option value="sans">Sans serif</option><option value="serif">Serif</option><option value="mono">Monospace</option>

@@ -1,6 +1,7 @@
 .workspace {
   --workspace-topbar-height: 46px;
   --workspace-editor-surface: var(--bg);
+  --workspace-ui-scale: 1;
   position: relative;
 }
 .workspace .workspace-main {
@@ -18,8 +19,8 @@
 .workspace .workspace-panels > summary {
   display: grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   padding: 0;
   flex: none;
 }
@@ -123,6 +124,55 @@
 .workspace .subject-page.selected {
   background: var(--active);
   box-shadow: inset 2px 0 var(--accent);
+}
+.workspace .subject-page-row {
+  display: flex;
+  position: relative;
+  align-items: flex-start;
+  min-width: 0;
+}
+.workspace .subject-page-row > .subject-page { min-width: 0; flex: 1; }
+.workspace .chapter-toggle { flex: none; margin-top: 6px; padding: 4px; }
+.workspace .page-row-menu { flex: none; margin-top: 6px; }
+.workspace .page-row-menu:not([open]) { opacity: 0; }
+.workspace .subject-page-row:is(:hover,:focus-within) .page-row-menu { opacity: 1; }
+.workspace .subject-page-row .page-row-menu > div { z-index: 28; }
+.workspace .pinned-pages { border-bottom: 1px solid var(--line); }
+.workspace .pinned-pages > button { padding: 6px; color: var(--muted); }
+.workspace .inline-page-title {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+.workspace .inline-page-title input {
+  flex: 1;
+  min-width: 120px;
+  font: inherit;
+  font-size: 22px;
+  padding: 4px;
+  color: var(--fg);
+  background: var(--surface-secondary);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+.workspace .inline-page-title [role="alert"] { width: 100%; color: var(--danger); }
+.workspace .page-outline {
+  max-width: var(--page-width);
+  color: var(--muted);
+  margin: 4px auto 0;
+  padding: 0 28px;
+  font-size: 12px;
+}
+ .workspace .writing-extra-commands { max-height: 25vh; overflow: auto; }
+.workspace .editor-source-fallback textarea { display: block; width: 100%; margin-top: 8px; padding: 8px; background: var(--bg); color: var(--fg); font-family: monospace; }
+.workspace .page-outline summary { cursor: pointer; width: fit-content; }
+.workspace .page-outline ol { max-height: 24vh; overflow: auto; }
+.workspace .page-outline button { text-align: start; }
+@container writing (max-width: 780px) {
+  .workspace .page-visit-button { width: 23px; }
 }
 .workspace .lean-title {
   margin-block: 13px 0;
@@ -254,4 +304,52 @@
     left: 0;
     right: auto;
   }
+}
+
+.workspace :is(.note-breadcrumbs span,.subject-page strong,.library-book-title,.workspace-subject-picker,.document-toolbar summary) {
+  font-size: calc(12px * var(--workspace-ui-scale));
+}
+.workspace :is(.subject-pages h2,.page-save-button,.topbar-new-note) {
+  font-size: calc(13px * var(--workspace-ui-scale));
+}
+.workspace :is(.page-save-button,.topbar-new-note,.pdf-toolbar .btn,.canvas-toolbar .btn) {
+  min-height: 32px;
+}
+.workspace .page-visit-button:disabled { opacity: .35; }
+.workspace .bulk-page-controls { display: flex; justify-content: space-between; gap: 4px; margin-bottom: 8px; }
+.workspace .bulk-page-controls button { font-size: 11px; }
+.workspace .subject-page-row input[type="checkbox"] { margin: 13px 5px 0 2px; }
+.workspace .subject-page-row > .library-book { flex: 1; min-width: 0; }
+.workspace .back-to-results { align-self: flex-start; margin: 4px 10px; }
+.workspace .cortex-reference-layout { min-height: 0; flex: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .workspace :is(.icon,.subject-page,.library-book,.document-toolbar,.prosemirror-virtual-cursor) {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+@media (forced-colors: active) {
+  .workspace :is(.subject-page.selected,.library-book.selected,[aria-pressed="true"],.chapter-toggle[aria-expanded="true"]) {
+    outline: 1px solid Highlight;
+  }
+  .workspace :is(button,select,input,summary):focus-visible { outline-color: Highlight; }
+  .workspace .milkdown :is(td,th) { border-color: CanvasText !important; }
+}
+
+.workspace .opening-page { z-index: 9; padding: 6px 12px; color: var(--fg); background: var(--surface-secondary); font-size: 12px; }
+.workspace .opening-page details { position: relative; display: inline-block; margin-inline-start: 12px; }
+.workspace .opening-page pre { position: absolute; padding: 9px; width: min(75vw, 530px); max-height: 42vh; overflow: auto; white-space: pre-wrap; border: 1px solid var(--line); color: var(--fg); background: var(--bg); }
+.workspace .long-page-list .subject-page-row:not(:hover):not(:focus-within):not(:has(details[open])) {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 42px;
+}
+
+.workspace .waiting-for-sketch {
+  min-height: min(40vh, 380px);
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 6px;
 }

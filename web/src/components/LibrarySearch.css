@@ -1,0 +1,11 @@
+.library-search-options.lean-menu{position:relative;overflow:visible}
+.library-search-options.lean-menu>div{min-width:220px;left:auto;right:0;z-index:32}
+.library-search-options summary{display:flex;align-items:center;justify-content:center}
+.library-search-fields label{display:flex;gap:8px;align-items:center;white-space:normal;overflow-wrap:anywhere}
+.library-search-fields fieldset{border:1px solid var(--line);border-radius:6px;margin:4px 0;padding:3px}
+.library-search-fields fieldset label{justify-content:space-between;padding:5px}
+.library-search-fields input[type=date]{max-width:150px;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:4px;padding:3px}
+.search-results mark{background:var(--active);color:var(--fg);border-bottom:1px solid var(--accent)}
+.library-index-status{margin:8px;padding:6px;color:var(--muted);font-size:12px;overflow-wrap:anywhere}
+.library-index-status li{margin-bottom:5px}
+.library-index-status small{display:block}

@@ -9,7 +9,7 @@ import './EquationComposer.css';
 export interface EquationComposerProps {
   initialLatex: string;
   initialDisplay: boolean;
-  onApply: (latex: string, display: boolean) => void | Promise<void>;
+  onApply: (latex: string, display: boolean, append?: boolean) => void | Promise<void>;
   onClose: () => void;
 }
 
@@ -20,6 +20,7 @@ const STRUCTURES = [
   { label: 'Integral', glyph: '∫', latex: '\\int_{#?}^{#?}#?\\,d#?' },
   { label: 'Sum', glyph: '∑', latex: '\\sum_{#?}^{#?}#?' },
   { label: 'Subscript', glyph: 'xₙ', latex: '#?_{#?}' },
+  { label: 'Aligned derivation', glyph: '≡', latex: '\\begin{aligned}#?&=#?\\\\#?&=#?\\end{aligned}' },
 ];
 const SYMBOLS = [
   { label: 'Alpha', glyph: 'α', latex: '\\alpha' },
@@ -30,7 +31,12 @@ const SYMBOLS = [
   { label: 'Epsilon', glyph: 'ε', latex: '\\varepsilon' },
   { label: 'Plus or minus', glyph: '±', latex: '\\pm' },
   { label: 'Less than or equal', glyph: '≤', latex: '\\le' },
+  { label: 'Lambda', glyph: 'λ', latex: '\\lambda' },
+  { label: 'Approximately equal', glyph: '≈', latex: '\\approx' },
+  { label: 'Greater than or equal', glyph: '≥', latex: '\\ge' },
+  { label: 'Infinity', glyph: '∞', latex: '\\infty' },
 ];
+const recentStructures: string[] = [];
 const EXAMPLES = [
   { label: 'Quadratic formula', latex: 'x=\\frac{-b\\pm\\sqrt{b^2-4ac}}{2a}' },
   { label: 'Price elasticity', latex: '\\varepsilon_p=\\frac{\\Delta Q/Q}{\\Delta P/P}' },
@@ -50,7 +56,10 @@ export function EquationComposer({ initialLatex, initialDisplay, onApply, onClos
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [loadKey, setLoadKey] = useState(0);
+  const [symbolSearch, setSymbolSearch] = useState('');
+  const [copyStatus, setCopyStatus] = useState('');
   const [answer, setAnswer] = useState<EquationAnswer | null>(null);
+  const sourceRef = useRef<HTMLTextAreaElement>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const keyboardHostRef = useRef<HTMLDivElement>(null);
   const fieldRef = useRef<MathfieldElement | null>(null);
@@ -179,9 +188,15 @@ export function EquationComposer({ initialLatex, initialDisplay, onApply, onClos
     if (dirty()) setConfirmDiscard(true);
     else onClose();
   };
-  const insert = (value: string) => {
+  const insert = (value: string, recent = false) => {
     const field = fieldRef.current;
     if (!field || applying.current) return;
+    if(recent){
+      const index=recentStructures.indexOf(value);
+      if(index!==-1)recentStructures.splice(index,1);
+      recentStructures.unshift(value);
+      recentStructures.splice(3);
+    }
     sourceLast.current = false;
     field.insert(value, { format: 'latex', selectionMode: 'placeholder', focus: true, feedback: false });
     latexRef.current = field.getValue('latex');
@@ -219,12 +234,19 @@ export function EquationComposer({ initialLatex, initialDisplay, onApply, onClos
       fieldRef.current?.focus();
     } catch { setAnswer(null); }
   };
-  const apply = async () => {
+  const copy = async (value: string, label: string) => {
+    try { await navigator.clipboard.writeText(value); setCopyStatus(`${label} copied.`); }
+    catch { setCopyStatus('Clipboard is unavailable. Select and copy the source manually.'); }
+  };
+  const apply = async (withWorking=false) => {
     if (applying.current) return;
     setError('');
     let value: string;
     try {
-      value = readDraft().trim();
+      const draft = readDraft().trim();
+      const current = withWorking ? solveEquation(draft) : null;
+      if (withWorking && (!answer?.working || current?.completed !== answer.completed)) { setAnswer(null); return; }
+      value = withWorking && answer?.working ? answer.working : draft;
       if (!value) { setError('Write an equation before inserting.'); return; }
       if (/\\(?:placeholder|prompt)\b|#\?/.test(value)) {
         setError('Fill in the empty boxes before inserting the equation.');
@@ -234,8 +256,15 @@ export function EquationComposer({ initialLatex, initialDisplay, onApply, onClos
       // Preflight with the same local renderer used by notes. Never store a
       // MathLive-only placeholder or an expression the note cannot display.
       katex.renderToString(value, { displayMode: displayRef.current, throwOnError: true, strict: false, trust: false });
-    } catch {
-      setError('This equation is not ready to display. Check it or edit the source below.');
+    } catch (cause) {
+      const position = (cause as {position?:number})?.position;
+      if (typeof position === 'number' && position >= 0) {
+        setSourceOpen(true);
+        setError(`Check the equation near character ${position+1}.`);
+        if (typeof requestAnimationFrame !== 'undefined') requestAnimationFrame(() => {
+          sourceRef.current?.focus(); sourceRef.current?.setSelectionRange(position, position+1);
+        });
+      } else setError('This equation is not ready to display. Check it or edit the source below.');
       return;
     }
     applying.current = true;
@@ -244,7 +273,8 @@ export function EquationComposer({ initialLatex, initialDisplay, onApply, onClos
     if (fieldRef.current) fieldRef.current.readOnly = true;
     keyboardRef.current?.hide({ animate: false });
     try {
-      await onApply(value, displayRef.current);
+      if(withWorking)await onApply(value, true, true);
+      else await onApply(value, displayRef.current);
       applied.current = true;
       if (mounted.current) onClose();
     } catch (cause) {
@@ -265,28 +295,34 @@ export function EquationComposer({ initialLatex, initialDisplay, onApply, onClos
       }}>
         <p className="equation-intro">Type your equation, or choose a structure. Press Tab to move between its boxes.</p>
         <div className="equation-structures" role="toolbar" aria-label="Equation structures">
-          {STRUCTURES.map(item => <button key={item.label} type="button" disabled={!ready || busy} title={`Insert ${item.label.toLowerCase()}`} onMouseDown={event => event.preventDefault()} onClick={() => insert(item.latex)}>
+          {[...STRUCTURES].sort((a,b)=>(recentStructures.indexOf(a.latex)+1||10)-(recentStructures.indexOf(b.latex)+1||10)).map(item => <button key={item.label} type="button" disabled={!ready || busy} title={`Insert ${item.label.toLowerCase()}`} onMouseDown={event => event.preventDefault()} onClick={() => insert(item.latex,true)}>
             <span className="equation-glyph" aria-hidden="true">{item.glyph}</span><span>{item.label}</span>
           </button>)}
         </div>
         <div className="equation-visual" ref={hostRef} />
         <div className="equation-solve">
           <button type="button" className="btn ghost small" disabled={busy || !latex.trim()} onClick={solve}>Auto-solve</button>
-          <span className="muted small">Calculations & equations in x · angles in radians</span>
+          <span className="muted small">Calculations and equations in x · Trig angles use radians</span>
+          <button type="button" className="btn ghost small" disabled={busy||!latex.trim()} onClick={()=>void copy(readDraft(),'Equation')}>Copy LaTeX</button>
         </div>
         {answer && <div className="equation-answer" role="status" aria-live="polite">
           <span className="muted small">{answer.approximate ? 'Approximate answer' : 'Answer'}</span>
           <span className="equation-answer-value">{answer.approximate&&!answer.steps ? '≈ ' : ''}{answer.text}</span>
+          {answer.alternateExact&&<span className="muted small">Exact {answer.alternateExact}</span>}
+          {answer.decimal&&<span className="muted small">{answer.steps?answer.decimal:`≈ ${answer.decimal}`}</span>}
           <button type="button" className="btn ghost small" disabled={busy} onClick={()=>addAnswer()}>Add answer</button>
+          <button type="button" className="btn ghost small" disabled={busy} onClick={()=>void copy(answer.text,'Answer')}>Copy answer</button>
         </div>}
         {!!answer?.steps?.length&&<details className="equation-steps"><summary>Show steps</summary><ol>
           {answer.steps.map((step,index)=><li key={index}><p>{step.title}</p><div className="equation-step-math" dangerouslySetInnerHTML={{__html:katex.renderToString(step.latex,{displayMode:true,throwOnError:true,strict:false,trust:false})}}/></li>)}
-        </ol><button type="button" className="btn ghost small" disabled={busy} onClick={()=>addAnswer(true)}>Add working</button></details>}
+        </ol><button type="button" className="btn ghost small" disabled={busy} onClick={()=>addAnswer(true)}>Add working</button>{!!initialLatex&&<button type="button" className="btn ghost small" disabled={busy} onClick={()=>void apply(true)}>Insert working below</button>}</details>}
+        {copyStatus&&<p className="muted small" role="status">{copyStatus}</p>}
         {!ready && !loadError && <p className="muted small" role="status">Loading equation tools…</p>}
         {loadError && <div className="equation-message" role="alert"><span>The visual editor could not load. Your source is preserved.</span><button type="button" className="btn ghost small" disabled={busy} onClick={() => setLoadKey(value => value + 1)}>Try again</button><details><summary>Details</summary><pre>{loadError}</pre></details></div>}
         <div className="equation-secondary">
           <div className="equation-symbols" role="group" aria-label="Greek letters and symbols">
-            {SYMBOLS.map(item => <button key={item.label} type="button" aria-label={`Insert ${item.label.toLowerCase()}`} title={item.label} disabled={!ready || busy} onMouseDown={event => event.preventDefault()} onClick={() => insert(item.latex)}>{item.glyph}</button>)}
+            <input className="field symbol-search" aria-label="Find math symbol" placeholder="Find symbol" value={symbolSearch} onChange={event=>setSymbolSearch(event.target.value)}/>
+            {SYMBOLS.filter(item=>item.label.toLowerCase().includes(symbolSearch.trim().toLowerCase()) || item.glyph===symbolSearch.trim()).map(item => <button key={item.label} type="button" aria-label={`Insert ${item.label.toLowerCase()}`} title={item.label} disabled={!ready || busy} onMouseDown={event => event.preventDefault()} onClick={() => insert(item.latex)}>{item.glyph}</button>)}
           </div>
           <div className="equation-edit-actions">
             <button type="button" className="btn ghost small" disabled={!ready || busy} onClick={() => command('undo')}>Undo</button>
@@ -308,7 +344,7 @@ export function EquationComposer({ initialLatex, initialDisplay, onApply, onClos
         </div></details>
         <details className="equation-source" open={sourceOpen} onToggle={event => setSourceOpen(event.currentTarget.open)}>
           <summary>Advanced: LaTeX source</summary>
-          <label><span className="muted small">Equation source</span><textarea className="field" aria-label="Equation source" value={latex} disabled={busy} spellCheck={false} onChange={event => {
+          <label><span className="muted small">Equation source</span><textarea ref={sourceRef} className="field" aria-label="Equation source" value={latex} disabled={busy} spellCheck={false} onChange={event => {
             if (applying.current) return;
             sourceLast.current = true;
             latexRef.current = event.target.value;

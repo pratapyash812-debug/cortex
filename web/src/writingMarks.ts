@@ -3,6 +3,9 @@ import type {Plugin} from 'unified';
 import type {Root} from 'mdast';
 import {decodeTextStyle,encodeTextStyle,paragraphLayout,TEXT_FONTS,textStyle} from './writingStyles';
 interface Ast {type:string;value?:string;children?:Ast[];cortexLayout?:ReturnType<typeof paragraphLayout>}
+const simpleMarks: Record<string,{close:string;type:string}> = {
+  '<u>':{close:'</u>',type:'cortexUnderline'},'<sup>':{close:'</sup>',type:'cortexSuperscript'},'<sub>':{close:'</sub>',type:'cortexSubscript'},
+};
 const blockContainers = new Set(['root', 'listItem', 'blockquote', 'footnoteDefinition']);
 function transform(node:Ast){
   if(!node.children||['code','inlineCode','math','inlineMath'].includes(node.type))return;
@@ -23,12 +26,12 @@ function transform(node:Ast){
   const children=node.children.flatMap(n=>n.type==='text'&&n.value?.includes('==')?n.value.split(/(==)/).filter(Boolean).map(value=>({type:value==='=='?'cortexDelimiter':'text',value})): [n]);
   const result:Ast[]=[];
   for(let i=0;i<children.length;i++){
-    const item=children[i],underline=item.type==='html'&&item.value==='<u>',highlight=item.type==='cortexDelimiter';
+    const item=children[i],simple=item.type==='html'?simpleMarks[item.value??'']:undefined,highlight=item.type==='cortexDelimiter';
     const style=item.type==='html'&&item.value?.match(/^<span data-cortex-text="([a-z]+,\d{1,2},[a-z]+)">$/);
-    if(underline||highlight||style){
-      const end=children.findIndex((n,j)=>j>i&&(highlight?n.type==='cortexDelimiter':n.type==='html'&&n.value===(underline?'</u>':'</span>')));
+    if(simple||highlight||style){
+      const end=children.findIndex((n,j)=>j>i&&(highlight?n.type==='cortexDelimiter':n.type==='html'&&n.value===(simple?.close??'</span>')));
       if(end>i+1){
-        const wrapped:Ast={type:underline?'cortexUnderline':highlight?'cortexHighlight':'cortexTextStyle',children:children.slice(i+1,end)};
+        const wrapped:Ast={type:simple?.type??(highlight?'cortexHighlight':'cortexTextStyle'),children:children.slice(i+1,end)};
         if(style)wrapped.value=style[1];
         transform(wrapped);result.push(wrapped);i=end;continue;
       }
@@ -42,6 +45,7 @@ const remark:Plugin<[],Root>=function(){
   const wrap=(before:string,after:string)=>(node:Ast,_parent:unknown,state:{containerPhrasing:(node:Ast,info:unknown)=>string},info:unknown)=>before+state.containerPhrasing(node,info)+after;
   data.toMarkdownExtensions=[...(data.toMarkdownExtensions??[]),{handlers:{
     cortexUnderline:wrap('<u>','</u>'),cortexHighlight:wrap('==','=='),
+    cortexSuperscript:wrap('<sup>','</sup>'),cortexSubscript:wrap('<sub>','</sub>'),
     cortexTextStyle:(node:Ast,parent:unknown,state:Parameters<ReturnType<typeof wrap>>[2],info:unknown)=>
       wrap(`<span data-cortex-text="${encodeTextStyle(decodeTextStyle(node.value??''))}">`,'</span>')(node,parent,state,info),
   }}];
@@ -55,6 +59,8 @@ const mark=(name:string,ast:string,tag:string)=>$markSchema(name,()=>({
 }));
 export const underlineMark=mark('cortex_underline','cortexUnderline','u');
 export const highlightMark=mark('cortex_highlight','cortexHighlight','mark');
+export const superscriptMark=mark('cortex_superscript','cortexSuperscript','sup');
+export const subscriptMark=mark('cortex_subscript','cortexSubscript','sub');
 
 export const textStyleMark=$markSchema('cortex_text_style',()=>({
   attrs:{font:{default:'default'},size:{default:0},colour:{default:'default'}},

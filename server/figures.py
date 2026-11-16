@@ -113,6 +113,11 @@ def normalize(raw):
     out={'kind':kind,'title':text(raw.get('title'),'Graph' if kind!='diagram' else 'Flowchart'),
          'xLabel':text(raw.get('xLabel'),'x' if kind=='function' else '',60),'yLabel':text(raw.get('yLabel'),'y' if kind=='function' else '',60),
          'theme':'light' if raw.get('theme')=='light' else 'dark'}
+    if caption := text(raw.get('caption'),limit=180): out['caption'] = caption
+    if kind != 'diagram' and (raw.get('yMin') is not None or raw.get('yMax') is not None):
+        out['yMin'] = number(raw.get('yMin'),'Minimum y')
+        out['yMax'] = number(raw.get('yMax'),'Maximum y')
+        if out['yMax'] - out['yMin'] < 1e-9: raise ValueError('Maximum y must be greater than minimum y.')
     if kind=='function':
         expressions=raw.get('expressions',['x^2'])
         if not isinstance(expressions,list) or not 1<=len(expressions)<=4: raise ValueError('Add between one and four functions.')
@@ -138,6 +143,7 @@ def render(raw):
     bg,fg,muted,grid=('#1c1e24','#ebedf1','#a9afbc','#3b404c') if dark else ('#ffffff','#20242b','#626b79','#dfe4eb')
     escaped=lambda value:html.escape(str(value),quote=True)
     pieces=[]
+    inspection = None
     def label(x,y,value,size=13,anchor='middle',color=None):
         pieces.append(f'<text x="{x:.2f}" y="{y:.2f}" text-anchor="{anchor}" fill="{color or fg}" font-size="{size}">{escaped(value)}</text>')
     if kind=='diagram':
@@ -173,10 +179,12 @@ def render(raw):
             if kind=='bar': xmin-=.6;xmax+=.6
             if xmin==xmax: xmin-=.5;xmax+=.5
             series=[(name,[(xs[i],row[1][j]) for i,row in enumerate(rows)]) for j,name in enumerate(headers[1:])]
+            inspection = {'columns': headers, 'rows': [[name, *values] for name, values in rows]}
             valid=[v for _,values in rows for v in values if v is not None]
             ymin,ymax=min(0,min(valid)),max(0,max(valid))
             summary=f'{len(rows)} data rows; series: '+', '.join(headers[1:])+'. Empty cells stay missing.'+(' Percent values use percentage points.' if '%' in config['data'] else '')
-        if ymin==ymax: ymin-=max(1,abs(ymin)*.1);ymax+=max(1,abs(ymax)*.1)
+        if 'yMin' in config: ymin, ymax = config['yMin'], config['yMax']
+        elif ymin==ymax: ymin-=max(1,abs(ymin)*.1);ymax+=max(1,abs(ymax)*.1)
         else:
             padding=(ymax-ymin)*.08;ymin-=padding;ymax+=padding
         sx=lambda x:left+(x-xmin)/(xmax-xmin)*(right-left)
@@ -194,7 +202,9 @@ def render(raw):
             stride=max(1,math.ceil(len(labels)/10))
             for i,value in enumerate(labels):
                 if i%stride==0 or i==len(labels)-1: label(sx(xs[i]),bottom+22,value if len(value)<=13 else value[:12]+'…',11,color=muted)
+        pieces.append(f'<defs><clipPath id="plot-bounds"><rect x="{left-18}" y="{top}" width="{right-left+36}" height="{bottom-top}"/></clipPath></defs>')
         for si,(name,points) in enumerate(series):
+            pieces.append('<g clip-path="url(#plot-bounds)">')
             color=COLORS[si]
             if kind=='bar':
                 bar_width=min(45,(right-left)/max(2,len(points))*0.75/len(series))
@@ -214,12 +224,19 @@ def render(raw):
                 if not function and len(points)<=40:
                     for x,y in points:
                         if y is not None: pieces.append(f'<circle cx="{sx(x):.2f}" cy="{sy(y):.2f}" r="3.5" fill="{color}"/>')
+            pieces.append('</g>')
             label(100+(si%2)*390,440+(si//2)*22,'— '+(name if len(name)<48 else name[:47]+'…'),12,'start',color)
         label((left+right)/2,417,config['xLabel'],13,color=muted)
         pieces.append(f'<text transform="translate(21 {(top+bottom)/2}) rotate(-90)" text-anchor="middle" fill="{muted}" font-size="13">{escaped(config["yLabel"])}</text>')
     label(width/2,30,config['title'],18)
+    if caption := config.get('caption'):
+        lines = textwrap.wrap(caption, width=79, break_long_words=True)
+        for i, line in enumerate(lines):
+            label(width/2,height+13+i*18,line,13,color=muted)
+        height += 18*len(lines)+10
+        summary += f' {caption}'
     svg=f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}" role="img" aria-labelledby="title desc"><title id="title">{escaped(config["title"])}</title><desc id="desc">{escaped(summary)}</desc><rect width="100%" height="100%" rx="14" fill="{bg}"/><g font-family="Segoe UI,Arial,sans-serif">'+''.join(pieces)+'</g></svg>'
-    return {'config':config,'svg':svg,'summary':summary}
+    return {'config':config,'svg':svg,'summary':summary,'inspection':inspection}
 
 def atomic(path,content):
     path.parent.mkdir(parents=True,exist_ok=True);temporary=None
@@ -251,7 +268,11 @@ def sketch_svg(strokes, title='Sketch', options=None):
         for i in range(0,len(stroke['points']),2):
             x=number(stroke['points'][i],'Coordinate');y=number(stroke['points'][i+1],'Coordinate')
             min_x=min(min_x,x);min_y=min(min_y,y);max_x=max(max_x,x);max_y=max(max_y,y)
-    if not strokes:min_x=min_y=0;max_x=300;max_y=180
+    labels = options.get('labels', []) if options else []
+    for label in labels:
+        min_x=min(min_x,label['x']); max_x=max(max_x,label['x']+len(label['text'])*8)
+        min_y=min(min_y,label['y']-15); max_y=max(max_y,label['y'])
+    if not strokes and not labels:min_x=min_y=0;max_x=300;max_y=180
     if options and options.get('axes'):
         min_x=min(min_x,0);min_y=min(min_y,0);max_x=max(max_x,100);max_y=max(max_y,0)
     left=min_x-30;top=min_y-30;width=max(100,max_x-left+30);height=max(100,max_y-top+30)
@@ -261,8 +282,26 @@ def sketch_svg(strokes, title='Sketch', options=None):
         paths.append(f'<rect x="{left}" y="{top}" width="{width}" height="{height}" fill="url(#grid)"/>')
     if options and options.get('axes'):
         paths.append(f'<path d="M{left} 0H{left+width}M0 {top}V{top+height}" fill="none" stroke="#555" stroke-width="1"/>')
+    for label in labels:
+        paths.append(f'<text x="{label["x"]}" y="{label["y"]}" font-size="14">{html.escape(label["text"])}</text>')
+    if options and options.get('axes'):
+        x_label=html.escape(options.get('xLabel','x')); y_label=html.escape(options.get('yLabel','y'))
+        paths.append(f'<text x="{left+width-8}" y="-8" text-anchor="end">{x_label}</text><text x="8" y="{top+14}">{y_label}</text>')
     for stroke in strokes:
         values=stroke['points'];path='M'+' L'.join(f'{values[i]} {values[i+1]}' for i in range(0,len(values),2))
         color=stroke['color'] if re.fullmatch(r'#[a-fA-F0-9]{3,8}|[a-zA-Z]{1,20}',stroke['color']) else '#e5484d'
-        paths.append(f'<path d="{path}" fill="none" stroke="{color}" stroke-width="{number(stroke["width"],"Width")}" stroke-linecap="round" stroke-linejoin="round"/>')
+        width_value=number(stroke['width'],'Width')
+        if pressure := stroke.get('pressure'):
+            for index in range(1,len(pressure)):
+                x0,y0,x1,y1=values[2*index-2:2*index+2]
+                line_width=width_value*(.35+.65*(pressure[index-1]+pressure[index])/2)
+                paths.append(f'<path d="M{x0} {y0}L{x1} {y1}" fill="none" stroke="{color}" stroke-width="{line_width}" stroke-linecap="round"/>')
+        else:
+            paths.append(f'<path d="{path}" fill="none" stroke="{color}" stroke-width="{width_value}" stroke-linecap="round" stroke-linejoin="round"/>')
+    if options and (caption := options.get('caption')):
+        width=max(width,300)
+        lines=textwrap.wrap(caption,width=int(width/8),break_long_words=True)
+        for i,line in enumerate(lines):
+            paths.append(f'<text x="{left+width/2}" y="{top+height+i*18+15}" text-anchor="middle" font-size="13">{html.escape(line)}</text>')
+        height+=18*len(lines)+8
     return f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{left} {top} {width} {height}" role="img"><title>{html.escape(title)}</title><rect x="{left}" y="{top}" width="{width}" height="{height}" fill="white"/>'+''.join(paths)+'</svg>'

@@ -4,7 +4,7 @@ Requires Cortex to be closed. Never reads or changes a notebook folder. No proce
 is terminated and the signed Python executables must match the current runtime.
 """
 from __future__ import annotations
-import argparse,hashlib,json,os,shutil,subprocess,uuid
+import argparse,hashlib,json,os,shutil,subprocess,tempfile,uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -32,7 +32,7 @@ def deploy(source:Path,destination:Path):
                 raise RuntimeError('Close Cortex before installing; no running app was changed')
     staged=destination.parent/('Cortex-stage-'+uuid.uuid4().hex)
     shutil.copytree(source,staged);verify(staged)
-    backup=destination/'backups'/('cortex-lean-'+datetime.now().strftime('%Y%m%d-%H%M%S'));backup.mkdir(parents=True,exist_ok=False)
+    backup=destination/'backups'/('cortex-lean-'+datetime.now().strftime('%Y%m%d-%H%M%S-%f'));backup.mkdir(parents=True,exist_ok=False)
     parts=('app','python')+tuple(p.name for p in source.iterdir() if p.is_file())
     moved=[];installed=[]
     try:
@@ -50,5 +50,39 @@ def deploy(source:Path,destination:Path):
     shutil.rmtree(staged)
     receipt={'version':manifest['version'],'backup':str(backup),'installedFiles':len(manifest['files']),'runtimeUnchanged':True}
     (backup/'deployment.json').write_text(json.dumps(receipt,indent=2),encoding='utf-8');print(json.dumps(receipt,indent=2));return receipt
+def rollback(destination: Path):
+    """Restore the latest fully verified prior build using the normal deployment gate."""
+    destination = destination.resolve()
+    if destination.name!='Cortex' or destination.parent.name!='Programs':
+        raise ValueError('Expected the user-scope Cortex installation directory')
+    repository = destination/'backups'
+    if repository.is_symlink():
+        raise ValueError('The installation backup folder cannot be a link')
+    for previous in sorted(repository.glob('cortex-lean-*'),reverse=True):
+        if previous.is_symlink() or (previous/'release.json').is_symlink() or not (previous/'deployment.json').is_file():
+            continue
+        try:
+            manifest = verify(previous)
+            if manifest.get('product')!='Cortex' or not manifest['files']:
+                continue
+        except (OSError,ValueError,KeyError,TypeError,AttributeError):
+            continue
+        with tempfile.TemporaryDirectory(prefix='Cortex-rollback-',dir=destination.parent) as temporary:
+            source = Path(temporary)/'release'
+            source.mkdir()
+            shutil.copy2(previous/'release.json',source/'release.json')
+            for rel in manifest['files']:
+                target = source/rel
+                target.parent.mkdir(parents=True,exist_ok=True)
+                shutil.copy2(previous/rel,target)
+            return deploy(source,destination)
+    raise ValueError('No complete, verified previous version is available')
+
 if __name__=='__main__':
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--source',type=Path,required=True);p.add_argument('--destination',type=Path,required=True);a=p.parse_args();deploy(a.source,a.destination)
+    p=argparse.ArgumentParser(description=__doc__)
+    action=p.add_mutually_exclusive_group(required=True)
+    action.add_argument('--source',type=Path,help='staged release folder')
+    action.add_argument('--rollback',action='store_true',help='restore the latest verified earlier release')
+    p.add_argument('--destination',type=Path,required=True)
+    a=p.parse_args()
+    rollback(a.destination) if a.rollback else deploy(a.source,a.destination)

@@ -23,12 +23,15 @@ export const writingShortcuts = [
   ['ArrowRight', 'indent', 'Increase indent'],
 ] as const satisfies readonly (readonly [string, FormatAction, string])[];
 
+export type ShortcutOverrides=Record<string,string>;
+let shortcutOverrides:ShortcutOverrides={};
+export function setWritingShortcuts(overrides:ShortcutOverrides){shortcutOverrides=overrides;}
 export function writingShortcut(event: KeyboardEvent): FormatAction | undefined {
   if (event.defaultPrevented || event.isComposing || event.getModifierState('AltGraph') ||
       event.ctrlKey === event.metaKey || !event.altKey || event.shiftKey) return;
   // Mac Option and some keyboard layouts emit a different character for the chord.
   const key = event.code.replace(/^(?:Key|Digit)/, '');
-  return writingShortcuts.find(([shortcut]) => shortcut === key)?.[1];
+  return writingShortcuts.find(([shortcut,action]) => (shortcutOverrides[action]??shortcut) === key)?.[1];
 }
 
 export function shortcutLabel(key: string, mac: boolean): string {

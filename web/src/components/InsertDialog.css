@@ -1,3 +1,5 @@
+.insert-image-preview{display:grid;place-items:center;min-height:70px;overflow:hidden;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px}.insert-image-preview img{max-width:100%;max-height:180px;object-fit:contain}.insert-image-crop{flex-wrap:wrap}
+.quick-table-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;width:min(340px,100%);margin-block:6px}.quick-table-grid button{font:inherit;color:inherit;background:var(--surface-secondary);border:1px solid var(--line);border-radius:4px;padding:4px 2px}.quick-table-grid button:hover{background:var(--hover)}
 .insert-form { display:grid; gap:12px; min-width:0; }
 .insert-form label { display:grid; gap:5px; min-width:0; font-size:13px; }
 .insert-row { display:flex; flex-wrap:wrap; gap:12px; align-items:end; }

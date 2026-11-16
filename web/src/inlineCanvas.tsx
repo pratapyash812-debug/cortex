@@ -12,16 +12,16 @@ export function canvasEmbedPath(text: string): string | undefined {
   if (!path || path.startsWith('/') || path.includes('\\') || path.split('/').some(part => !part || part === '.' || part === '..') || /^[a-z]+:/i.test(path)) return undefined;
   return path;
 }
-interface CanvasHost { notes: NoteInfo[]; openNote: (path: string, newTab?: boolean) => void }
-interface Mounted { root: Root; path: string; notes: NoteInfo[]; remove: () => void }
+interface CanvasHost { readOnly?:boolean; notes: NoteInfo[]; openNote: (path: string, newTab?: boolean) => void }
+interface Mounted { root?: Root; observer?: IntersectionObserver; path: string; notes: NoteInfo[]; readOnly?:boolean; remove: () => void }
 
 /** The widget owns its React root; the ordinary ![[path.canvas]] line owns storage/undo. */
 export function inlineCanvasPlugin(getHost: () => CanvasHost) {
   return $prose(() => {
     const mounted = new Map<HTMLElement, Mounted>();
-    const render = (entry: Mounted) => entry.root.render(
+    const render = (entry: Mounted) => entry.root?.render(
       <Suspense fallback={<p className="muted small" role="status">Opening sketch…</p>}>
-        <CanvasView embedded onRemove={entry.remove} initialTool="pen" path={entry.path} notes={entry.notes}
+        <CanvasView embedded forceReadOnly={entry.readOnly} onRemove={entry.remove} initialTool="pen" path={entry.path} notes={entry.notes}
           onOpenNote={(path, newTab) => getHost().openNote(path, newTab)} />
       </Suspense>);
     const destroy = (element: HTMLElement) => {
@@ -29,7 +29,8 @@ export function inlineCanvasPlugin(getHost: () => CanvasHost) {
       if (!entry) return;
       mounted.delete(element);
       // ProseMirror may remove a widget during the containing React tree's commit.
-      queueMicrotask(() => entry.root.unmount());
+      entry.observer?.disconnect();
+      if(entry.root)queueMicrotask(() => entry.root?.unmount());
     };
     return new Plugin({
       key: new PluginKey('cortex-inline-canvas'),
@@ -46,14 +47,26 @@ export function inlineCanvasPlugin(getHost: () => CanvasHost) {
               const element = document.createElement('section');
               element.className = 'inline-canvas'; element.contentEditable = 'false';
               element.setAttribute('aria-label', `Sketch: ${path.split('/').pop()}`);
-              const entry = { root: createRoot(element), path, notes: getHost().notes, remove: () => {
+              const entry:Mounted = { path, notes: getHost().notes, readOnly:getHost().readOnly, remove: () => {
                 const position = getPos();
                 if (view.isDestroyed || position === undefined) return;
                 const source = view.state.doc.resolve(position).nodeBefore;
                 if (!source || canvasEmbedPath(source.textContent) !== path) return;
                 view.dispatch(view.state.tr.deleteRange(position-source.nodeSize,position).scrollIntoView()); view.focus();
               } };
-              mounted.set(element, entry); render(entry); return element;
+              mounted.set(element,entry);
+              const start=()=>{
+                if(!mounted.has(element)||entry.root)return;
+                entry.observer?.disconnect();element.classList.remove('waiting-for-sketch');
+                element.textContent='';
+                entry.root=createRoot(element);render(entry);
+              };
+              if(typeof IntersectionObserver==='function'){
+                element.classList.add('waiting-for-sketch');element.textContent='Sketch';
+                entry.observer=new IntersectionObserver(changes=>{if(changes.some(change=>change.isIntersecting))start();},{rootMargin:'360px'});
+                entry.observer.observe(element);
+              }else start();
+              return element;
             }, {
               key: `canvas:${path}:${occurrence}`, side: -1, ignoreSelection: true,
               stopEvent: () => true, destroy: element => destroy(element as HTMLElement),
@@ -65,8 +78,8 @@ export function inlineCanvasPlugin(getHost: () => CanvasHost) {
       view() {
         return {
           update() {
-            const notes = getHost().notes;
-            for (const entry of mounted.values()) if (entry.notes !== notes) { entry.notes = notes; render(entry); }
+            const {notes,readOnly}=getHost();
+            for(const entry of mounted.values())if(entry.notes!==notes||entry.readOnly!==readOnly){entry.notes=notes;entry.readOnly=readOnly;render(entry);}
           },
           destroy() { for (const element of [...mounted.keys()]) destroy(element); },
         };

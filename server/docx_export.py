@@ -51,7 +51,7 @@ class Word:
             except (ValueError,RecursionError):
                 self.warnings.add('Some equation syntax could not be converted to Word maths. Its exact LaTeX source is included below; PDF keeps the rendered appearance.')
                 return [text_run('[Equation source: '+source+']',marks)]
-        extra={'strong':('b','1'),'b':('b','1'),'em':('i','1'),'i':('i','1'),'u':('u','single'),'del':('strike','1'),'s':('strike','1'),'mark':('highlight','yellow'),'code':('rFonts','Consolas')}.get(n.tag)
+        extra={'strong':('b','1'),'b':('b','1'),'em':('i','1'),'i':('i','1'),'u':('u','single'),'sup':('vertAlign','superscript'),'sub':('vertAlign','subscript'),'del':('strike','1'),'s':('strike','1'),'mark':('highlight','yellow'),'code':('rFonts','Consolas')}.get(n.tag)
         if extra and n.tag!='code':marks=(*marks,extra)
         if n.tag == 'span':
             style = re.fullmatch(r'([a-z]+),(\d{1,2}),([a-z]+)', n.attrs.get('data-cortex-text', ''))

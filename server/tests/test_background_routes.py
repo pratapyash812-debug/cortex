@@ -54,6 +54,16 @@ class BackgroundRouteTests(unittest.TestCase):
                 self.assertIn('application/json',result['error'])
         self.assertFalse((self.root/'backups').exists())
 
+    def test_editing_activity_yields_both_workers_after_json_validation(self):
+        handler=self.http.RequestHandlerClass
+        with patch.object(handler.documents,'note_changed') as pdf, patch.object(handler.backups,'note_changed') as backup:
+            code,_=self.call('POST','/api/editing/activity',{},ctype='text/plain')
+            self.assertEqual(code,400)
+            pdf.assert_not_called();backup.assert_not_called()
+            code,data=self.call('POST','/api/editing/activity',{})
+            self.assertEqual(code,200);self.assertTrue(data['ok'])
+            pdf.assert_called_once();backup.assert_called_once()
+
     def test_pdf_search_rejects_foreign_paths_without_changing_notes(self):
         note=self.http.RequestHandlerClass.vault.create('','Keep','Saved')
         code,_=self.call('GET','/api/documents/search?q=x&path=../outside.pdf');self.assertEqual(code,400)

@@ -19,8 +19,26 @@ class ReleaseDeploymentTests(unittest.TestCase):
         self.manifest()
     def tearDown(self):self.tmp.cleanup()
     def manifest(self):
-        files={p.relative_to(self.source).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in self.source.rglob('*') if p.is_file() and p.name!='release.json'}
-        (self.source/'release.json').write_text(json.dumps({'version':'test','files':files}))
+        self.write_manifest(self.source,'test')
+    @staticmethod
+    def write_manifest(source,version):
+        files={p.relative_to(source).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in source.rglob('*') if p.is_file() and p.name!='release.json'}
+        (source/'release.json').write_text(json.dumps({'product':'Cortex','version':version,'files':files}))
+    def test_rollback_skips_unverified_backup_and_restores_previous_without_reading_notes(self):
+        self.write_manifest(self.dest,'earlier')
+        with patch.object(deploy_release.subprocess,'run') as command:
+            command.return_value.stdout='[]'
+            new=deploy_release.deploy(self.source,self.dest)
+            suspect=self.dest/'backups/cortex-lean-99999999'
+            suspect.mkdir()
+            (suspect/'deployment.json').write_text('{}')
+            (suspect/'release.json').write_text(json.dumps({'product':'Cortex','version':'bad','files':{'missing.exe':'invalid'}}))
+            receipt=deploy_release.rollback(self.dest)
+        self.assertEqual(receipt['version'],'earlier')
+        self.assertEqual((self.dest/'app/server/server.py').read_text(),'old source')
+        self.assertEqual((Path(receipt['backup'])/'app/server/server.py').read_text(),'new source')
+        self.assertTrue(Path(new['backup']).exists())
+        self.assertEqual(self.original.read_text(),'Student original')
     def test_complete_replacement_keeps_backup_and_drops_stale_assets(self):
         with patch.object(deploy_release.subprocess,'run') as command:
             command.return_value.stdout='[]';receipt=deploy_release.deploy(self.source,self.dest)

@@ -9,7 +9,10 @@ export function subjectPages(navigation:NoteNavigation,subject:string):SubjectPa
   const visit=(path:string)=>{
     const note=navigation.byPath.get(path);if(!note)return;
     const trail=navigation.trail(path);
-    result.push({note,context:trail.slice(0,-1).filter(n=>n.title!==subject).map(n=>n.title).join(' / '),overview:navigation.children.has(path)});
+    const owner=navigation.subject(path);
+    const chapters=trail.slice(0,-1).filter(n=>n.title!==owner).map(n=>n.title);
+    const context=[...(!subject&&owner?[owner]:[]),...chapters].join(' / ');
+    result.push({note,context,overview:navigation.children.has(path)});
     for(const child of navigation.children.get(path)??[])visit(child);
   };
   for(const root of navigation.roots)if(!subject||navigation.subject(root.path)===subject)visit(root.path);

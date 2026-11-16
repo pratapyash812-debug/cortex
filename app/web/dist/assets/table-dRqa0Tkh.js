@@ -1,0 +1,6 @@
+function h(n){if(n.length>12e4)throw Error("Paste at most 100 rows and 20 columns.");let r=!1,s=!1;for(const e of n)if(e==='"')r=!r;else if(!r&&e==="	")s=!0;else if(!r&&e===`
+`)break;const i=s?"	":",",t=[];let l=[],a="";r=!1;for(let e=0;e<n.length;e++){const o=n[e];o==='"'&&(r||a==="")?r&&n[e+1]==='"'?(a+='"',e++):r=!r:!r&&(o===i||o===`
+`||o==="\r")?(l.push(a),a="",o!==i&&(o==="\r"&&n[e+1]===`
+`&&e++,t.push(l),l=[])):a+=o}if(r)throw Error("Close the quotation marks in your pasted table.");for((a||l.length)&&t.push([...l,a]);t.length&&t[t.length-1].every(e=>!e.trim());)t.pop();const f=Math.max(0,...t.map(e=>e.length));if(!t.length||t.length>100||f>20)throw Error("Use between 1 and 100 rows, and up to 20 columns.");return t.map(e=>Array.from({length:f},(o,p)=>e[p]??""))}const g=n=>n.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\\/g,"\\\\").replace(/([|*_[\]`])/g,"\\$1").replace(/\r?\n/g,"<br>");function c(n,r,s=""){const i=s.trim()?h(s):null;if(!Number.isSafeInteger(n)||n<1||n>100||!Number.isSafeInteger(r)||r<1||r>20)throw Error("Choose 1–100 rows and 1–20 columns.");const t=i??Array.from({length:n},()=>Array.from({length:r},()=>"")),l=a=>"| "+a.map(g).join(" | ")+" |";return[l(t[0]),"| "+t[0].map(()=>"---").join(" | ")+" |",...t.slice(1).map(l)].join(`
+`)+`
+`}export{h as p,c as t};

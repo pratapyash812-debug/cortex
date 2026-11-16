@@ -14,7 +14,8 @@ import { inlineCanvasPlugin } from '../inlineCanvas';
 import {noteMarkdown} from '../noteMarkdown';
 import {pasteEquations} from '../mathPastePlugin';
 import {clearTextFormatting,formatChecklist,formatList,formatParagraph,formatText} from '../writingCommands';
-import {writingRemark,underlineMark,highlightMark,textStyleMark} from '../writingMarks';
+import {applyCopiedFormat,captureFormat,listNumbering,nextUnchecked,type CopiedFormat} from '../writingExtras';
+import {writingRemark,underlineMark,highlightMark,textStyleMark,superscriptMark,subscriptMark} from '../writingMarks';
 import {writingLayoutSchema} from '../writingLayout';
 import {writingListView} from '../writingListView';
 import type {Alignment,TextStyle} from '../writingStyles';
@@ -26,7 +27,9 @@ import {writingShortcut} from '../writingShortcuts';
 import {runClipboardAction, type ClipboardAction} from '../editorClipboard';
 export type FormatAction = 'bold' | 'italic' | 'underline' | 'highlight' | 'strike' | 'undo' | 'redo' |
   'paragraph' | `heading${1 | 2 | 3 | 4 | 5 | 6}` | 'bullet' | 'numbered' | 'checklist' | 'quote' |
-  'indent' | 'outdent' | 'clearText' | 'inlineCode' | 'link' | 'equation' | Alignment | {text: Partial<TextStyle>};
+  'indent' | 'outdent' | 'clearText' | 'inlineCode' | 'link' | 'equation' |
+  'copyFormat' | 'applyFormat' | 'matchFormat' | 'superscript' | 'subscript' | 'restartNumbering' | 'continueNumbering' | 'nextUnchecked' | 'insertDate' | Alignment | {text: Partial<TextStyle>};
+import {studyEditorPlugin} from '../studyEditor';
 import { createInsertRequest, figureId, type InsertRequest, type InsertKind } from '../insert';
 export type { InsertRequest, InsertKind } from '../insert';
 import { toEditor, fromEditor, wikiTarget, singleLineMath } from '../wikilinks';
@@ -34,7 +37,9 @@ import { calloutPlugin, footnotePlugin, embedPlugin, audioPlugin, pdfPlugin, ins
 import { findTextIndex, type FindOptions } from '../findText';
 import { createEquationRequest, isEquationShortcut, type EquationRequest } from '../equation';
 export type { EquationRequest } from '../equation';
-import { findHighlightsKey, findHighlightsPlugin, findInDocument, scrollFindMatch } from '../findPlugin';
+import { findHighlightsKey, findHighlightsPlugin, findInDocument, replacementPreview, scrollFindMatch } from '../findPlugin';
+
+import {headingKey,parseWikiReference,pasteSourceReference} from '../sourceReference';
 
 // What the app can ask the open editor to do.
 export interface EditorHandle {
@@ -44,6 +49,8 @@ export interface EditorHandle {
   readMarkdown: () => string | null;
   /** Finds and selects a case-insensitive literal match in this editor. index is zero-based, or -1 when there are no matches. */
   findText: (query: string, direction: 'next' | 'previous' | 'first', options?: FindOptions) => { count: number; index: number };
+  previewReplace: (query:string,replacement:string,options?:FindOptions)=>ReturnType<typeof replacementPreview>;
+  goToHeading: (heading:string)=>boolean;
   selectedText: () => string;
   requestEquation: () => boolean;
   requestInsert: (kind: InsertKind) => boolean;
@@ -59,12 +66,14 @@ export interface EditorHandle {
 
 interface Props {
   path: string;
+  readOnly?: boolean;
   initial: string;
   attachments: Record<string, string>;
   notes: NoteInfo[];
   onChange: (markdown: string) => void;
   onEdit?: () => void;
   onOpenLink: (target: string, newTab?: boolean) => void;
+  onSearchSelection?: (text:string)=>void;
   /** Opens a note by its vault path — used by Deep research to open a cited source note. */
   onOpenNote?: (path: string) => void;
   handleRef?: React.MutableRefObject<EditorHandle | null>;
@@ -86,7 +95,7 @@ interface Picker { x: number; y: number; from: number; query: string; sel: numbe
 
 function createEditor() {
   return new Crepe({
-    features: { [Crepe.Feature.BlockEdit]: false, [Crepe.Feature.Toolbar]: false, [Crepe.Feature.ListItem]: false },
+    features: { [Crepe.Feature.BlockEdit]: false, [Crepe.Feature.Toolbar]: false, [Crepe.Feature.ListItem]: false, [Crepe.Feature.Table]: false },
     featureConfigs: {
       [Crepe.Feature.ImageBlock]: { onUpload: async (file: File) => (await api.upload(file)).url },
       [Crepe.Feature.Placeholder]: { text: 'Start writing…', mode: 'block' },
@@ -102,13 +111,15 @@ export function preloadEditor() {
 }
 
 // Block editor (slash menu, drag handles, tables, code, images) with Obsidian-style [[links]].
-export function Editor({ path, initial, attachments, notes, onChange, onEdit, onOpenLink, handleRef, onEquationRequest, onInsertRequest, autoFocus = false, onReady,documentStyle={},onWordCount,onFormatting }: Props) {
+export function Editor({ path, readOnly=false, initial, attachments, notes, onChange, onEdit, onOpenLink, handleRef, onEquationRequest, onInsertRequest, autoFocus = false, onReady,documentStyle={},onWordCount,onFormatting,onSearchSelection }: Props) {
   const host = useRef<HTMLDivElement>(null);
+  const currentReadOnly=useRef(readOnly);currentReadOnly.current=readOnly;
   const crepeRef = useRef<Crepe | null>(null);
   const toolbar = useRef<HTMLDivElement>(null);
   const [editorFailed, setEditorFailed] = useState(false);
   const [editorAttempt, setEditorAttempt] = useState(0);
   const [formattingPopup, setFormattingPopup] = useState<FormattingPopup | null>(null);
+  const copiedFormat=useRef<CopiedFormat|null>(null);
   const [clipboardMessage, setClipboardMessage] = useState('');
   const clipboardBusy = useRef(false);
   const clipboardTimer = useRef<number | undefined>(undefined);
@@ -129,6 +140,7 @@ export function Editor({ path, initial, attachments, notes, onChange, onEdit, on
   openLinkRef.current = onOpenLink;
   const formattingCallback=useRef(onFormatting);formattingCallback.current=onFormatting;
   const countRef=useRef(onWordCount);countRef.current=onWordCount;
+  const countTimer=useRef<number|undefined>(undefined);
   const [picker, setPicker] = useState<Picker | null>(null);
   const pickerRef = useRef<Picker | null>(null);
   pickerRef.current = picker;
@@ -151,10 +163,12 @@ export function Editor({ path, initial, attachments, notes, onChange, onEdit, on
     hoverLink.current = null;
     hideTimer.current = window.setTimeout(() => setPreview(null), delay);
   };
+  useEffect(()=>{crepeRef.current?.setReadonly(readOnly);},[readOnly]);
   useEffect(() => () => {
     window.clearTimeout(showTimer.current);
     window.clearTimeout(hideTimer.current);
     window.clearTimeout(clipboardTimer.current);
+    window.clearTimeout(countTimer.current);
   }, []);
   useEffect(() => {
     const slot = previewBox.current;
@@ -167,7 +181,7 @@ export function Editor({ path, initial, attachments, notes, onChange, onEdit, on
     if ((e.target as HTMLElement).closest('.hover-preview')) return;
     const a = (e.target as HTMLElement).closest('a');
     const href = a?.getAttribute('href') ?? '';
-    if (!a || !href.startsWith('wiki:')) return;
+    if (!a || !href.startsWith('wiki:') || parseWikiReference(wikiTarget(href)).kind==='pdf') return;
     if (a === hoverLink.current) { window.clearTimeout(hideTimer.current); return; }
     window.clearTimeout(showTimer.current);
     window.clearTimeout(hideTimer.current);
@@ -194,19 +208,26 @@ export function Editor({ path, initial, attachments, notes, onChange, onEdit, on
       ctx.set(defaultValueCtx, toEditor(initial, attachmentsRef.current));
       ctx.update(remarkStringifyOptionsCtx, o => ({ ...o, bullet: '-' as const, rule: '-' as const }));
       ctx.update(editorViewOptionsCtx, previous => ({...previous,handlePaste:(view,event,slice)=>
-        pasteEquations(view,event,slice,markdown=>ctx.get(parserCtx)(markdown)) || previous.handlePaste?.(view,event,slice) || false}));
+        (!event.clipboardData?.getData('application/x-cortex-plain-text')&&(pasteSourceReference(view,event)||pasteEquations(view,event,slice,markdown=>ctx.get(parserCtx)(markdown)))) || previous.handlePaste?.(view,event,slice) || false}));
     })
-      .use(writingRemark).use(underlineMark).use(highlightMark).use(textStyleMark)
+      .use(writingRemark).use(underlineMark).use(highlightMark).use(textStyleMark).use(superscriptMark).use(subscriptMark)
       .use(writingLayoutSchema).use(writingListView)
       .use(quickFormattingPlugin(setFormattingPopup, () => toolbar.current, state => formattingCallback.current?.(state), () => {
         if (Date.now() > quiet.current) editRef.current?.();
       }))
-      .use(findHighlightsPlugin).use(calloutPlugin).use(footnotePlugin).use(inlineCanvasPlugin(() => ({notes: notesRef.current, openNote: (target, newTab) => openLinkRef.current(target, newTab)}))).use(embedPlugin).use(audioPlugin(() => attachmentsRef.current)).use(pdfPlugin(() => attachmentsRef.current));
+      .use(studyEditorPlugin((view,options)=>{
+        const request=createInsertRequest(view,path,()=>!view.isDestroyed&&crepeRef.current===crepe,options.kind,
+          (markdown,additions)=>crepe.editor.action(ctx=>ctx.get(parserCtx)(toEditor(markdown,{...attachmentsRef.current,...additions})))??null,
+          additions=>{attachmentsRef.current={...attachmentsRef.current,...additions};},options.position,options.range);
+        return request?{...request,tablePaste:options.tablePaste,tableDetail:options.tableDetail,figureInitial:options.figureInitial}:null;
+      },request=>insertCallback.current?.(request),setClipboardMessage))
+      .use(findHighlightsPlugin).use(calloutPlugin).use(footnotePlugin).use(inlineCanvasPlugin(() => ({readOnly:currentReadOnly.current,notes: notesRef.current, openNote: (target, newTab) => openLinkRef.current(target, newTab)}))).use(embedPlugin).use(audioPlugin(() => attachmentsRef.current)).use(pdfPlugin(() => attachmentsRef.current));
     const mathLines = singleLineMath(initial);
     let alive = true;
     crepe.create().then(() => {
       if (!alive) return;
       crepeRef.current = crepe;
+      if(currentReadOnly.current)crepe.setReadonly(true);
       const originalDoc=crepe.editor.action(ctx=>ctx.get(editorViewCtx).state.doc);
       let originalMarkdown: string | undefined;
       const readMarkdown = () => crepe.editor.action(ctx => {
@@ -217,14 +238,14 @@ export function Editor({ path, initial, attachments, notes, onChange, onEdit, on
         return noteMarkdown(doc, originalDoc, initial, serialize, attachmentsRef.current, mathLines, originalMarkdown);
       });
       requestEquationRef.current = position => {
-        if (!alive || crepeRef.current !== crepe || !equationCallback.current) return false;
+        if (!alive || currentReadOnly.current || crepeRef.current !== crepe || !equationCallback.current) return false;
         const request = crepe.editor.action(ctx => createEquationRequest(ctx.get(editorViewCtx), path, () => alive && crepeRef.current === crepe, position));
         if (!request) return false;
         equationCallback.current(request);
         return true;
       };
       requestInsertRef.current = (kind, position) => {
-        if (!alive || crepeRef.current !== crepe || !insertCallback.current) return false;
+        if (!alive || currentReadOnly.current || crepeRef.current !== crepe || !insertCallback.current) return false;
         const request = crepe.editor.action(ctx => createInsertRequest(ctx.get(editorViewCtx), path, () => alive && crepeRef.current === crepe, kind,
           (markdown, additions) => ctx.get(parserCtx)(toEditor(markdown, {...attachmentsRef.current, ...additions})),
           additions => { attachmentsRef.current = {...attachmentsRef.current, ...additions}; }, position));
@@ -233,6 +254,7 @@ export function Editor({ path, initial, attachments, notes, onChange, onEdit, on
       };
       formatRef.current = action => alive ? crepe.editor.action(ctx => {
             const view = ctx.get(editorViewCtx), { $from } = view.state.selection;
+            if(!view.editable)return false;
             if ($from.parent.type.spec.code && action !== 'undo' && action !== 'redo') return false;
             if (action === 'equation') {
               const opened = requestEquationRef.current();
@@ -251,9 +273,17 @@ export function Editor({ path, initial, attachments, notes, onChange, onEdit, on
               return true;
             }
             let changed = false;
+            if(action==='copyFormat'){
+              copiedFormat.current=captureFormat(view);setClipboardMessage('Formatting copied.');view.focus();return true;
+            }
+            if(action==='applyFormat')return copiedFormat.current?applyCopiedFormat(view,copiedFormat.current):false;
+            if(action==='matchFormat')return applyCopiedFormat(view,captureFormat(view,true),true);
+            if(action==='insertDate'){view.dispatch(view.state.tr.insertText(new Intl.DateTimeFormat().format(new Date())).scrollIntoView());view.focus();return true;}
+            if(action==='nextUnchecked'){const found=nextUnchecked(view);if(found)view.focus();return found;}
+            if(action==='restartNumbering'||action==='continueNumbering'){const changed=listNumbering(view,action==='continueNumbering');view.focus();return changed;}
             if(action==='undo'||action==='redo')changed=(action==='undo'?undo:redo)(view.state,view.dispatch);
             else if(action==='inlineCode')changed=callCommand(toggleInlineCodeCommand.key)(ctx);
-            else if(action==='bold'||action==='italic'||action==='underline'||action==='highlight'||action==='strike'){
+            else if(action==='bold'||action==='italic'||action==='underline'||action==='highlight'||action==='strike'||action==='superscript'||action==='subscript'){
               const mark = view.state.schema.marks[markNames[action]];
               changed = toggleMark(mark, null, {removeWhenPresent: false})(view.state, view.dispatch);
             }
@@ -274,7 +304,7 @@ export function Editor({ path, initial, attachments, notes, onChange, onEdit, on
       if (handleRef) {
         handleRef.current = {
           path,
-          captureCanvasInsert: () => !alive ? null : crepe.editor.action(ctx => {
+          captureCanvasInsert: () => !alive||currentReadOnly.current ? null : crepe.editor.action(ctx => {
             const request = createInsertRequest(ctx.get(editorViewCtx), path, () => alive && crepeRef.current === crepe, 'canvas',
               markdown => ctx.get(parserCtx)(toEditor(markdown, attachmentsRef.current)), () => {});
             return request ? canvasPath => request.applyMarkdown(`![[${canvasPath}]]`) : null;
@@ -283,6 +313,14 @@ export function Editor({ path, initial, attachments, notes, onChange, onEdit, on
             const {doc,selection} = ctx.get(editorViewCtx).state;
             return selection.to - selection.from <= 200 ? doc.textBetween(selection.from, selection.to, '\n').trim() : '';
           }) ?? '' : '',
+          previewReplace:(query,replacement,options)=>alive?crepe.editor.action(ctx=>replacementPreview(ctx.get(editorViewCtx),query,replacement,options))??null:null,
+          goToHeading:heading=>alive?crepe.editor.action(ctx=>{
+            const view=ctx.get(editorViewCtx),key=headingKey(heading);
+            const target=Array.from(view.dom.querySelectorAll<HTMLElement>('h1,h2,h3,h4,h5,h6')).find(node=>headingKey(node.textContent??'')===key||node.id===heading);
+            if(!key||!target)return false;
+            target.scrollIntoView({block:'start'});
+            return true;
+          })??false:false,
           requestEquation: () => alive && requestEquationRef.current(),
           requestInsert: kind => alive && requestInsertRef.current(kind),
           format: action => formatRef.current(action),
@@ -298,7 +336,7 @@ export function Editor({ path, initial, attachments, notes, onChange, onEdit, on
             if (match) scrollFindMatch(view, match);
             return { count: matches.length, index };
           }) ?? { count: 0, index: -1 } : { count: 0, index: -1 },
-          insertMarkdown: md => { crepe.editor.action(insert(toEditor(md, attachmentsRef.current))); },
+          insertMarkdown: md => { if(!currentReadOnly.current)crepe.editor.action(insert(toEditor(md, attachmentsRef.current))); },
           insertEmbed: (name, p) => {
             attachmentsRef.current = { ...attachmentsRef.current, [name]: p };
             crepe.editor.action(ctx => insertEmbedLine(ctx.get(editorViewCtx), name));
@@ -312,7 +350,11 @@ export function Editor({ path, initial, attachments, notes, onChange, onEdit, on
       crepe.on(l => l.updated(() => {
         if (alive && Date.now() > quiet.current) {
           const md = readMarkdown();
-          if (md !== undefined) { changeRef.current(md); countRef.current?.(wordCount(md)); }
+          if(md!==undefined){
+            changeRef.current(md);
+            window.clearTimeout(countTimer.current);
+            countTimer.current=window.setTimeout(()=>{if(alive)countRef.current?.(wordCount(md));},160);
+          }
         }
       }));
       const active = document.activeElement;
@@ -403,7 +445,9 @@ export function Editor({ path, initial, attachments, notes, onChange, onEdit, on
   // the server resolved into this note's attachments). A source file must open/download — it must never be
   // turned into a new, empty note by openByTitle. Fall through to normal note/canvas navigation otherwise.
   const openWikiTarget = (target: string, newTab: boolean) => {
-    const file = attachmentsRef.current[target];
+    const reference=parseWikiReference(target);
+    if(reference.kind==='pdf'){onOpenLink(target,newTab);return;}
+    const file = attachmentsRef.current[reference.path];
     if (typeof file === 'string' && file) {
       window.open('/files/' + file.split('/').map(encodeURIComponent).join('/'), '_blank', 'noopener,noreferrer');
       return;
@@ -474,7 +518,7 @@ export function Editor({ path, initial, attachments, notes, onChange, onEdit, on
 
   const style=pageStyle(documentStyle);
   return (
-    <div style={{fontFamily:PAGE_FONTS[style.font]||undefined,'--editor-font-size':style.size?`${style.size}px`:undefined} as React.CSSProperties} className="editor-host" onDoubleClickCapture={onDoubleClickCapture} onKeyUp={onKeyUp} onInput={onKeyUp} onKeyDownCapture={onKeyDownCapture} onClickCapture={onClickCapture} onAuxClick={onAuxClick} onMouseDownCapture={onMouseDownCapture} onMouseOver={onMouseOver} onMouseOut={onMouseOut} onKeyDown={() => hidePreview()}>
+    <div style={{fontFamily:PAGE_FONTS[style.font]||undefined,'--editor-font-size':style.size?`${style.size}px`:undefined} as React.CSSProperties} className="editor-host" lang={documentStyle.spellingLanguage==='da'?'da-DK':documentStyle.spellingLanguage==='en'?'en':undefined} onDoubleClickCapture={onDoubleClickCapture} onKeyUp={onKeyUp} onInput={onKeyUp} onKeyDownCapture={onKeyDownCapture} onClickCapture={onClickCapture} onAuxClick={onAuxClick} onMouseDownCapture={onMouseDownCapture} onMouseOver={onMouseOver} onMouseOut={onMouseOut} onKeyDown={() => hidePreview()}>
       <div ref={host} />
       {editorFailed && <div className="editor-source-fallback">
         <p role="alert">The formatted editor could not open this page. The saved Markdown is available below.</p>
@@ -482,9 +526,10 @@ export function Editor({ path, initial, attachments, notes, onChange, onEdit, on
           setEditorFailed(false);
           setEditorAttempt(attempt => attempt + 1);
         }}>Retry editor</button>
-        <details open><summary>Saved Markdown</summary><pre>{initial || 'This page is empty.'}</pre></details>
+        <button className="btn ghost small" onClick={()=>void navigator.clipboard.writeText(initial).then(()=>setClipboardMessage('Markdown copied.'),()=>setClipboardMessage('Select and copy the Markdown below.'))}>Copy Markdown</button>
+        <details open><summary>Saved Markdown</summary><textarea aria-label="Saved Markdown source" readOnly value={initial} rows={14}/></details>
       </div>}
-      {formattingPopup && <FloatingWritingTools popup={formattingPopup} toolbar={toolbar} format={action => formatRef.current(action)} clipboard={clipboard}/>}
+      {formattingPopup && <FloatingWritingTools popup={formattingPopup} toolbar={toolbar} format={action => formatRef.current(action)} clipboard={clipboard} onSearchSelection={onSearchSelection?()=>{const text=handleRef?.current?.selectedText();if(text){setFormattingPopup(null);onSearchSelection(text);}}:undefined}/>}
       {clipboardMessage && <div className="editor-clipboard-feedback" role="status">{clipboardMessage}</div>}
       {preview && (
         <div className="hover-preview" role="tooltip" aria-label="Note preview" style={{ left: preview.left, top: preview.top }}

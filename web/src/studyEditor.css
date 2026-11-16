@@ -1,0 +1,11 @@
+.ProseMirror .study-editor-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-block:4px 8px;user-select:none}.ProseMirror .study-editor-actions .btn{font-size:12px;min-height:26px}.ProseMirror .study-active-cell{outline:2px solid var(--accent);outline-offset:-2px}.ProseMirror .study-drop-target{border-block-start:2px solid var(--accent)}
+.ProseMirror .tableWrapper{max-width:100%;max-height:min(70vh,34rem);overflow:auto;overscroll-behavior-inline:contain;margin-block:0.75rem}
+.ProseMirror .tableWrapper table{border-collapse:collapse;table-layout:fixed;max-width:none}
+.ProseMirror .tableWrapper :is(th,td){position:relative;box-sizing:border-box;border:1px solid var(--table-border);padding:4px 9px;vertical-align:top;overflow-wrap:anywhere}
+.ProseMirror .tableWrapper :is(th,td) > p{margin:0}
+.ProseMirror .tableWrapper th{position:sticky;top:0;z-index:1;background:var(--table-header);color:var(--fg)}
+.ProseMirror .tableWrapper .selectedCell{background:var(--accent-soft,var(--surface-2))}
+.ProseMirror .column-resize-handle{position:absolute;inset-block:0;inset-inline-end:-2px;width:4px;background:var(--accent);pointer-events:none}
+.ProseMirror.resize-cursor{cursor:col-resize}
+.ProseMirror .study-editor-actions .field{font-size:12px;min-height:26px;width:auto;padding:3px 5px}.ProseMirror .study-editor-actions .study-column-width{width:68px}
+.canvas-board[data-tool="move"]{cursor:move}.canvas-board[data-tool="label"]{cursor:text}.equation-symbols .symbol-search{width:135px;min-width:100px}

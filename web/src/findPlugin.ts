@@ -1,3 +1,4 @@
+import { closeHistory } from '@milkdown/kit/prose/history';
 import { $prose } from '@milkdown/kit/utils';
 import { Plugin, PluginKey } from '@milkdown/kit/prose/state';
 import { Decoration, DecorationSet, type EditorView } from '@milkdown/kit/prose/view';
@@ -48,6 +49,31 @@ export function createFindPlugin(): Plugin<FindHighlights> {
     },
     props: { decorations: state => findHighlightsKey.getState(state)?.decorations ?? DecorationSet.empty },
   });
+}
+
+export function replacementPreview(view:EditorView,query:string,replacement:string,options?:FindOptions){
+  if(!view.editable||view.composing||!query||/[\r\n]/.test(replacement))return null;
+  const {doc}=view.state;
+  const matches:TextMatch[]=[];
+  for(const match of findInDocument(doc,query,options)){
+    if(match.from >= (matches[matches.length-1]?.to ?? 0) && doc.textBetween(match.from,match.to)!==replacement)matches.push(match);
+  }
+  const examples=matches.slice(0,8).map(match=>{
+    const start=doc.resolve(match.from),end=doc.resolve(match.to);
+    return {
+      before:start.parent.textBetween(Math.max(0,start.parentOffset-40),start.parentOffset),
+      match:doc.textBetween(match.from,match.to),
+      after:end.parent.textBetween(end.parentOffset,Math.min(end.parent.content.size,end.parentOffset+40)),
+    };
+  });
+  return {count:matches.length,examples,apply:()=>{
+    if(!matches.length||view.isDestroyed||!view.editable||view.composing||view.state.doc!==doc)return false;
+    const transaction=closeHistory(view.state.tr);
+    for(const match of matches.slice().reverse())transaction.insertText(replacement,match.from,match.to);
+    view.dispatch(transaction);
+    view.dispatch(closeHistory(view.state.tr).setMeta('addToHistory',false));
+    return true;
+  }};
 }
 
 export const findHighlightsPlugin = $prose(createFindPlugin);

@@ -1,11 +1,13 @@
 import {undoDepth,redoDepth} from '@milkdown/kit/prose/history';
 import type {EditorState} from '@milkdown/kit/prose/state';
 import type {Mark, ResolvedPos} from '@milkdown/kit/prose/model';
+import {wordCount} from './writing';
 import {paragraphLayout, textStyle, type Alignment, type TextStyle} from './writingStyles';
 
 export const markNames = {
   bold: 'strong', italic: 'emphasis', underline: 'cortex_underline',
   strike: 'strike_through', highlight: 'cortex_highlight', inlineCode: 'inlineCode',
+  superscript: 'cortex_superscript', subscript: 'cortex_subscript',
 };
 type Toggle = keyof typeof markNames;
 type ListToggle = 'bullet' | 'numbered' | 'checklist';
@@ -17,6 +19,7 @@ export type FormattingState = {
   align: Alignment | '';
   block: string;
   hasSelection: boolean;
+  selectedWords: number;
   canUndo: boolean;
   canRedo: boolean;
 };
@@ -77,5 +80,5 @@ export function readFormatting(state: EditorState): FormattingState {
   }
   if (!sawRun) readRun(state.storedMarks ?? $from.marks());
   if (!sawBlock) readBlock($from.parent.type.name, $from.parent.attrs, $from);
-  return {marks, font, size, colour, align, block, hasSelection: !empty, canUndo: undoDepth(state)>0, canRedo: redoDepth(state)>0};
+  return {marks, font, size, colour, align, block, hasSelection: !empty, selectedWords: empty?0:wordCount(state.doc.textBetween(from,to,' ')), canUndo: undoDepth(state)>0, canRedo: redoDepth(state)>0};
 }

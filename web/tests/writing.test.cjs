@@ -9,7 +9,7 @@ test('underline and highlighting roundtrip Markdown with nested formatting and p
  m._compile(ts.transpileModule(fs.readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,file);
  const p=unified().use(parse).use(m.exports.writingRemark).use(stringify);
  try {
-   for(const input of ['An <u>underlined **word**</u>.','==Highlighted *text*==.','`==literal==` and `<u>code</u>`.','Unclosed ==source.','<span data-cortex-text="serif,18,blue">A **styled** run</span>.']){
+   for(const input of ['An <u>underlined **word**</u>.','==Highlighted *text*==.','`==literal==` and `<u>code</u>`.','Unclosed ==source.','Water is H<sub>2</sub>O. Area is m<sup>2</sup>. ','<span data-cortex-text="serif,18,blue">A **styled** run</span>.']){
      const result=String(await p.process(input));assert.equal(String(await p.process(result)),result);if(input.includes('literal'))assert.match(result,/`==literal==`/);if(input.includes('underlined'))assert.match(result,/<u>underlined \*\*word\*\*<\/u>/);
      if(input.includes('styled'))assert.equal(result.trim(),input);
    }

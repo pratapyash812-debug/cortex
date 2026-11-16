@@ -22,4 +22,6 @@ These automatic copies still live on this laptop. Use **Download all notes & ori
 
 **Note options → Version history** restores earlier writing. **Settings → Recover notes** contains Recently deleted, Unsaved drafts and Older content. Existing configured sync stays under Settings; Cortex does not automatically upload your folders anywhere.
 
-To restore a ZIP backup, close Cortex, extract into a separate folder, and open it with the `--vault` launch option. Do not extract over an open notebook. Keep `.cortex` with the Markdown and attachments.
+To restore a managed backup, use **Settings → Browse verified backups → Review restore**. Cortex checks the ZIP and restores a separate library; your current library stays in place. For a manually downloaded ZIP, extract into a separate folder and use the `--vault` launch option to open it. Keep `.cortex` with the Markdown and attachments.
+
+For Windows release recovery, **Settings → About Cortex** reports the installed version and any verified previous build. Close Cortex before using the release deployment utility with `--rollback --destination "<full Cortex installation path>"`. This verifies the previous build again, restores the app and its runtime together, and keeps a backup of the outgoing installation. App rollback does not roll back a notebook.

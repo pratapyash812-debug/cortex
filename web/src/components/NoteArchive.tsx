@@ -2,8 +2,13 @@ import {useEffect,useState} from 'react';
 import {FileDiff,RotateCcw,FileText,LayoutDashboard,Folder} from 'lucide-react';
 import {api,type Version,type DiffData,type TrashItem,type Restored} from '../api';
 import {Modal} from './Modal';
-export function HistoryModal({ path, onClose, onRestore }: { path: string; onClose: () => void; onRestore: (content: string) => void }) {
-  const [versions, setVersions] = useState<Version[]>([]);
+type HistoryVersion = Version & {label?: string};
+
+export function HistoryModal({ path, onClose, onRestore, beforeCheckpoint }: { path: string; onClose: () => void; onRestore: (content: string) => void; beforeCheckpoint?: () => Promise<void> }) {
+  const [versions, setVersions] = useState<HistoryVersion[]>([]);
+  const [target, setTarget] = useState('');
+  const [checkpoint, setCheckpoint] = useState('');
+  const [savingCheckpoint, setSavingCheckpoint] = useState(false);
   const [sel, setSel] = useState<string | null>(null);
   const [preview, setPreview] = useState('');
   const [previewReady,setPreviewReady]=useState(false);
@@ -16,23 +21,56 @@ export function HistoryModal({ path, onClose, onRestore }: { path: string; onClo
     if (!sel || mode !== 'changes') return;
     let live = true;
     setDiff(null); setDiffError('');
-    api.diff(path, sel).then(d => { if (live) setDiff(d); }).catch(e => { if (live) setDiffError((e as Error).message); });
+    fetch(`/api/diff?path=${encodeURIComponent(path)}&id=${encodeURIComponent(sel)}&target=${encodeURIComponent(target)}`)
+      .then(async response => { const result = await response.json(); if (!response.ok) throw new Error(result.error); return result as DiffData; })
+      .then(result => { if (live) setDiff(result); }).catch(error => { if (live) setDiffError(error.message); });
     return () => { live = false; };
-  }, [path, sel, mode]);
+  }, [path, sel, mode, target]);
+
+  const saveCheckpoint = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!checkpoint.trim() || savingCheckpoint) return;
+    setSavingCheckpoint(true);
+    setDiffError('');
+    try {
+      await beforeCheckpoint?.();
+      const response = await fetch('/api/history', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({path,label:checkpoint})});
+      const saved = await response.json();
+      if (!response.ok) throw new Error(saved.error);
+      setVersions(items => [saved, ...items]);
+      setSel(saved.id);
+      setCheckpoint('');
+    } catch (cause) {
+      setDiffError(cause instanceof Error ? cause.message : 'Could not save this checkpoint.');
+    } finally {
+      setSavingCheckpoint(false);
+    }
+  };
   return (
-    <Modal title="Version history" onClose={onClose} wide>
+    <Modal title="Version history" onClose={() => { if (!savingCheckpoint) onClose(); }} wide>
+      <details className="history-checkpoint">
+        <summary>Save a checkpoint</summary>
+        <form onSubmit={event => void saveCheckpoint(event)}>
+          <label>Checkpoint name <input className="field" value={checkpoint} maxLength={80} onChange={event => setCheckpoint(event.target.value)} required /></label>
+          <button type="submit" className="btn ghost small" disabled={savingCheckpoint || !checkpoint.trim()}>{savingCheckpoint?'Saving…':'Save checkpoint'}</button>
+        </form>
+      </details>
+      {(mode !== 'changes' || !versions.length) && diffError && <p className="error" role="alert">{diffError}</p>}
       {versions.length ? (
         <div className="history">
           <ul>{versions.map(v => (
-            <li key={v.id}><button className={sel === v.id ? 'active' : ''} onClick={() => setSel(v.id)}>{new Date(v.time * 1000).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</button></li>
+            <li key={v.id}><button className={sel === v.id ? 'active' : ''} onClick={() => setSel(v.id)}>{v.label || new Date(v.time * 1000).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}</button></li>
           ))}</ul>
           <div className="history-main">
             <div className="base-tabs history-modes" role="group" aria-label="History view">
               <button className={mode === 'version' ? 'active' : ''} aria-pressed={mode === 'version'} onClick={() => setMode('version')}>This version</button>
-              <button className={mode === 'changes' ? 'active' : ''} aria-pressed={mode === 'changes'} onClick={() => setMode('changes')}><FileDiff size={13} /> Changes since</button>
+              <button className={mode === 'changes' ? 'active' : ''} aria-pressed={mode === 'changes'} onClick={() => setMode('changes')}><FileDiff size={13} /> Compare with</button>
             </div>
+            {mode === 'changes'&&<label>Compare with <select aria-label="Compare with version" value={target} onChange={event=>setTarget(event.target.value)}>
+              <option value="">Current note</option>{versions.filter(v=>v.id!==sel).map(v=><option value={v.id} key={v.id}>{v.label||new Date(v.time*1000).toLocaleString()}</option>)}
+            </select></label>}
             <div className="history-preview">
-              {mode === 'version' ? <pre>{preview}</pre> : <DiffView diff={diff} error={diffError} />}
+              {mode === 'version' ? <pre>{preview}</pre> : <DiffView diff={diff} error={diffError} comparison={target?'the selected version':'the current note'} />}
             </div>
           </div>
         </div>
@@ -46,13 +84,13 @@ export function HistoryModal({ path, onClose, onRestore }: { path: string; onClo
 }
 
 /** Line diff from the chosen version to the note as it is now: removed lines in red, added lines in green. */
-function DiffView({ diff, error }: { diff: DiffData | null; error: string }) {
+export function DiffView({ diff, error, comparison = 'the current note' }: { diff: DiffData | null; error: string; comparison?: string }) {
   if (error) return <p className="error small" role="alert">{error}</p>;
   if (!diff) return <p className="muted small">Comparing…</p>;
-  if (diff.identical) return <p className="muted small">This version is the same as the current note.</p>;
+  if (diff.identical) return <p className="muted small">There are no text changes compared with {comparison}.</p>;
   return (
     <div className="diff" aria-label="Changes since this version">
-      <p className="small diff-summary"><span className="diff-add-count">+{diff.added} added</span> <span className="diff-del-count">−{diff.removed} removed</span> <span className="muted">compared with the current note</span></p>
+      <p className="small diff-summary"><span className="diff-add-count">+{diff.added} added</span> <span className="diff-del-count">−{diff.removed} removed</span> <span className="muted">compared with {comparison}</span></p>
       {diff.lines.map((l, i) => l.op === 'gap'
         ? <div key={i} className="diff-gap muted small">⋯ {l.count} unchanged line{l.count === 1 ? '' : 's'}</div>
         : (

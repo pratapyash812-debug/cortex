@@ -238,11 +238,11 @@ def _inputs(data: bytes, name: str, warnings: list[str]) -> list[tuple[str, byte
     return result
 
 
-def convert_upload(data: bytes, name: str, dest_folder: str = 'Course import') -> dict:
+def convert_upload(data: bytes, name: str, dest_folder: str = 'Course import', *, sources=None, report=False, progress=None) -> dict:
     """Return exact sources, bounded companions and index; no filesystem writes."""
     destination = _destination(dest_folder)
     warnings: list[str] = []
-    inputs = _inputs(data, name, warnings)
+    inputs = _inputs(data, name, warnings) if sources is None else sources
     accepted = []
     skipped = unsupported = 0
     for source, blob in inputs:
@@ -275,7 +275,10 @@ def convert_upload(data: bytes, name: str, dest_folder: str = 'Course import') -
              'Generated explanations use English. Keep Danish subject terms and quotations in your notes when useful.', '', '## Materials', '']
     failed = preview_unsupported = 0
     formats = Counter()
-    for source, blob in accepted:
+    source_notes = {}
+    for index_number, (source, blob) in enumerate(accepted, 1):
+        if progress is not None and not progress('Checking originals', index_number-1, len(accepted), source):
+            break
         path = PurePosixPath(source)
         folder = folders.take(path.parts[:-1], warnings)
         source_folder = '/'.join(part for part in (destination, 'Sources', folder) if part)
@@ -307,6 +310,7 @@ def convert_upload(data: bytes, name: str, dest_folder: str = 'Course import') -
             # another unbounded textbook editor import.
             note = note[:MAX_NOTE_CHARS - 130].rsplit('\n', 1)[0] + '\n\nPreview shortened to keep this companion manageable. Open the original for the complete source.\n'
         output[note_path] = note
+        source_notes[note_path] = source
         index.append(f'- [[{note_path}|{safe_part(path.name)}]]')
     index_body = '\n'.join(index) + '\n'
     if len(index_body) > MAX_INDEX_CHARS:
@@ -318,6 +322,10 @@ def convert_upload(data: bytes, name: str, dest_folder: str = 'Course import') -
                            # One numeric count per format (format_docx, format_pdf, …). The client contract is
                            # Record<string, number> and sums stat values; a nested dict here would break that.
                            **{f'format_{ext}': count for ext, count in formats.items()}}
+    if progress is not None and len(source_notes) < len(accepted):
+        return {}
     if warnings:
         output['__warnings__'] = warnings
+    if report:
+        output['__source_names__'] = source_notes
     return output

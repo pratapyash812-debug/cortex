@@ -1,4 +1,5 @@
 .find-note {
+  flex-wrap:wrap;
   position: sticky;
   z-index: 18;
   top: 58px;
@@ -24,6 +25,12 @@
   font: inherit;
   font-size: 13px;
 }
+.find-replace-tools{display:flex;flex-wrap:wrap;align-items:center;gap:5px;flex:0 0 100%;border-top:1px solid var(--line);padding:5px 2px 1px}
+.find-replace-preview,.find-replace-notice{flex-basis:100%;font-size:12px}
+.find-replace-preview p{margin:4px 0}
+.find-replace-preview ul{max-height:148px;overflow:auto;padding-left:20px;margin-block:4px}
+.find-replace-preview li{line-height:1.5;overflow-wrap:anywhere}
+.find-replace-preview del,.find-replace-preview ins{background:var(--active);padding-inline:2px}
 .find-note-count { min-width: 64px; color: var(--muted); text-align: center; font-size: 11px; white-space: nowrap; }
 .find-note-button {
   display: grid;

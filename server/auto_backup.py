@@ -1,7 +1,7 @@
 """Verified local notebook backups, outside the notebook and outside typing's path."""
 from __future__ import annotations
-import json,math,os,re,tempfile,threading,time,uuid,zipfile
-from pathlib import Path
+import json,math,os,re,shutil,stat,subprocess,sys,tempfile,threading,time,unicodedata,uuid,zipfile
+from pathlib import Path,PurePosixPath
 import file_snapshot as snap
 import vault_lock
 
@@ -11,11 +11,47 @@ DEBOUNCE=30.0
 MIN_INTERVAL=300.0
 POLL=30.0
 
+def restore_entries(archive):
+    """Validate every member before extracting a verified archive."""
+    result = []
+    paths = set()
+    forbidden = re.compile(r'(?i)^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)')
+    for info in archive.infolist():
+        name = info.filename
+        parts = PurePosixPath(name).parts
+        if (not parts or name.startswith('/') or '\\' in name or
+            any(not part or part in ('.','..') or part.rstrip(' .') != part or forbidden.match(part)
+                or any(c in '<>:"|?*' or ord(c)<32 for c in part) for part in name.rstrip('/').split('/')) or
+            stat.S_ISLNK(info.external_attr >> 16) or info.flag_bits & 1):
+            raise ValueError('The backup contains a path that cannot be restored safely')
+        key = unicodedata.normalize('NFC', '/'.join(parts)).casefold()
+        if key in paths:
+            raise ValueError('The backup contains paths that collide on this computer')
+        paths.add(key)
+        if info.is_dir() or parts[:2] == ('.cortex','sync') or parts == ('.cortex','writer.lock'):
+            continue
+        result.append(info)
+    if not result:
+        raise ValueError('There are no files in this backup')
+    return result
+
+
 class BackupService:
     def __init__(self,vault,destination=None,background=False,retention=7,debounce=DEBOUNCE,min_interval=MIN_INTERVAL):
         self.vault=vault;self.identifier=snap.vault_id(vault.root)
-        base=Path(os.environ.get('LOCALAPPDATA',str(Path.home()/'.local/share')))/'Cortexez/Backups'
-        self.destination=(Path(destination) if destination else base/self.identifier).resolve()
+        base=Path(os.environ.get('LOCALAPPDATA',str(Path.home()/'.local/share')))/'Cortexez'
+        self._location_file = base/'BackupSettings'/(self.identifier+'.json')
+        self._default_destination=(Path(destination) if destination else base/'Backups'/self.identifier).resolve()
+        self.destination=self._default_destination
+        if destination is None:
+            try:
+                location = json.loads(self._location_file.read_text(encoding='utf-8')).get('destination')
+                if isinstance(location, str) and Path(location).is_absolute():
+                    saved = Path(location).resolve()
+                    if saved != vault.root and not saved.is_relative_to(vault.root):
+                        self.destination=saved
+            except (OSError,ValueError,AttributeError):
+                pass
         if self.destination==vault.root or self.destination.is_relative_to(vault.root):raise ValueError('Backup destination must be outside the notebook')
         self.background=background;self.retention=max(1,int(retention));self.debounce=debounce;self.min_interval=min_interval
         self._stop=threading.Event();self._wake=threading.Event();self._thread=None;self._run=threading.Lock();self._state=threading.RLock()
@@ -46,9 +82,100 @@ class BackupService:
                 if not isinstance(item.get('time'),(int,float)) or not math.isfinite(item['time']) or not re.fullmatch('[a-f0-9]{64}',item.get('sha256','')):continue
                 archive=self.destination/name
                 if archive.is_symlink() or not archive.is_file():continue
+                item["path"]=str(archive)
                 result.append(item)
             except (OSError,ValueError,KeyError,TypeError,AttributeError):continue
         return sorted(result,key=lambda x:x['time'],reverse=True)
+
+    def archives(self):
+        with self._state:
+            return self._receipts()
+
+    def _archive(self, name):
+        receipt = next((item for item in self._receipts() if item['archive'] == name), None)
+        if not receipt:
+            raise ValueError('Choose an available verified backup')
+        return receipt, self.destination / receipt['archive']
+
+    def keep_archive(self, name, keep):
+        if not isinstance(keep, bool):
+            raise ValueError('Choose whether this backup stays in rotation')
+        with self._run, self._state:
+            receipt, archive = self._archive(name)
+            receipt['keep'] = keep
+            self.vault._write_json_atomic(archive.with_name(archive.name+'.json'), receipt)
+            if self._last and self._last.get('archive') == name:
+                self._last = receipt
+        return receipt
+
+    def configure_destination(self, value):
+        if value is not None and (not isinstance(value, str) or not Path(value).is_absolute()):
+            raise ValueError('Enter the full path to a local folder')
+        destination = Path(value).resolve() if value is not None else self._default_destination
+        if destination == self.vault.root or destination.is_relative_to(self.vault.root):
+            raise ValueError('Choose a location outside the working library')
+        if value is not None and not destination.is_dir():
+            raise ValueError('The folder or drive is unavailable')
+        destination.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryFile(dir=destination):
+            pass
+        with self._run, self._state:
+            self._location_file.parent.mkdir(parents=True,exist_ok=True)
+            self.vault._write_json_atomic(self._location_file, {'destination':str(destination)})
+            self.destination=destination
+            self._loaded=False
+            self._pending=True
+            self._error=''
+            self._signature=None
+            self._last_success=-float('inf')
+        self._wake.set()
+        return self.status()
+
+    def reveal(self):
+        if not self.destination.is_dir():
+            raise ValueError('The backup folder or drive is unavailable')
+        if sys.platform == 'win32':
+            os.startfile(self.destination)
+        else:
+            subprocess.Popen(['open' if sys.platform == 'darwin' else 'xdg-open', str(self.destination)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return {'opened':True}
+
+    def review_restore(self, name):
+        with self._run:
+            receipt, archive = self._archive(name)
+            digest, _ = snap.file_hash(archive)
+            if digest != receipt['sha256']:
+                raise ValueError('Backup integrity could not be verified')
+            with zipfile.ZipFile(archive) as package:
+                files = restore_entries(package)
+                notes = [info.filename for info in files if info.filename.lower().endswith('.md') and not info.filename.startswith('.cortex/')]
+                return {'notes':len(notes),'files':len(files),'examples':notes[:8],'destination':str(self.vault.root.parent)}
+
+    def restore_archive(self, name):
+        with self._run:
+            receipt, archive = self._archive(name)
+            digest, identity = snap.file_hash(archive)
+            if digest != receipt['sha256']:
+                raise ValueError('Backup integrity could not be verified')
+            parent = self.vault.root.parent
+            folder = parent / f'Cortex restored {time.strftime("%Y-%m-%d")} {uuid.uuid4().hex[:8]}'
+            with tempfile.TemporaryDirectory(dir=parent,prefix='.cortex-restore-') as temporary:
+                stage = Path(temporary)/'library'
+                stage.mkdir()
+                with zipfile.ZipFile(archive) as package:
+                    files = restore_entries(package)
+                    for info in files:
+                        target = stage.joinpath(*PurePosixPath(info.filename).parts)
+                        target.parent.mkdir(parents=True,exist_ok=True)
+                        with package.open(info) as source, target.open('xb') as output:
+                            shutil.copyfileobj(source,output)
+                if snap.identity(archive) != identity:
+                    raise ValueError('The backup changed during extraction')
+                # Publish only the completely extracted copy. Sync starts disconnected.
+                if folder.exists():
+                    raise ValueError('The proposed restored folder already exists')
+                stage.rename(folder)
+            return {'folder':str(folder),'files':len(files)}
 
     def status(self):
         with self._state:
@@ -126,7 +253,8 @@ class BackupService:
 
     def _prune(self):
         # Never recurse, glob-delete, or infer ownership from a prefix alone.
-        for old in self._receipts()[self.retention:]:
+        rotate = [item for item in self._receipts() if item.get('keep') is not True]
+        for old in rotate[self.retention:]:
             archive=self.destination/old['archive'];metadata=self.destination/(old['archive']+'.json')
             try:
                 with zipfile.ZipFile(archive) as zipped:

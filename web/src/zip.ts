@@ -16,7 +16,7 @@ export function crc32(data: Uint8Array): number {
   return (c ^ 0xffffffff) >>> 0;
 }
 
-export interface ZipEntry { path: string; data: Uint8Array }
+export interface ZipEntry { path: string; data: Uint8Array; modified?: number }
 
 const MAX_BYTES = 0xf0000000; // stays clear of the 4 GB limit of the classic zip format
 
@@ -25,10 +25,11 @@ export function zipFiles(entries: ZipEntry[]): Blob {
   const parts: BlobPart[] = [];
   const central: Uint8Array[] = [];
   let offset = 0;
-  const now = new Date();
-  const dosTime = (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1);
-  const dosDate = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
   for (const e of entries) {
+    const now = new Date(e.modified || Date.now());
+    const dosTime = (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1);
+    const year = Math.max(1980, Math.min(now.getFullYear(), 2107));
+    const dosDate = ((year - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
     const name = enc.encode(e.path.replace(/\\/g, '/'));
     const crc = crc32(e.data);
     const local = new DataView(new ArrayBuffer(30));
@@ -58,7 +59,7 @@ export async function zipFileList(files: File[]): Promise<Blob> {
   const entries: ZipEntry[] = [];
   for (const f of files) {
     const rel = (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name;
-    entries.push({ path: rel, data: new Uint8Array(await f.arrayBuffer()) });
+    entries.push({ path: rel, data: new Uint8Array(await f.arrayBuffer()), modified: f.lastModified });
   }
   return zipFiles(entries);
 }

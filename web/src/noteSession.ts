@@ -11,8 +11,10 @@ const RETRY_DELAYS = [1000, 2500, 5000];
  */
 export function useNoteSession(onSaved: (info: NoteInfo) => void, onSaveError: (error: unknown) => void = () => {}) {
   const [note, setNote] = useState<Note | null>(null);
-  const [saveStatus, setSaveStatus] = useState<'saved'|'saving'|'error'>('saved');
+  const [saveStatus, setSaveStatus] = useState<'saved'|'saving'|'retrying'|'error'>('saved');
   const [saveError, setSaveError] = useState('');
+  const [lastSavedAt,setLastSavedAt]=useState(0);
+  const [recoveryId,setRecoveryId]=useState('');
   const noteRef = useRef<Note | null>(null);
   const generationRef = useRef(0);
   const revisionRef = useRef<{ path: string; generation: number; revision?: string; content: string } | null>(null);
@@ -50,6 +52,7 @@ export function useNoteSession(onSaved: (info: NoteInfo) => void, onSaveError: (
         return;
       }
       const info = await api.save(path, savedContent, meta, owner?.revision);
+      if(ownsCurrent()){setLastSavedAt(Number.isFinite(info.modified)?info.modified*1000:Date.now());setRecoveryId('');}
       if (owner) owner.revision = info.revision;
       if (owner) owner.content = savedContent;
       if (ownsCurrent() && dirtyRef.current?.path === path && dirtyRef.current.content === savedContent) dirtyRef.current = null;
@@ -113,8 +116,9 @@ export function useNoteSession(onSaved: (info: NoteInfo) => void, onSaveError: (
     try {
       const draft = unsaved();
       if (!draft) return;
-      await api.keepDraft(draft);
+      const saved=await api.keepDraft(draft);
       if (generationRef.current === generation && dirtyRef.current?.content === draft.content) {
+        setRecoveryId(saved.id);
         setSaveError(`${detail} A copy of these edits is in Recovery.`);
       }
     } catch { /* The editor stays dirty if local recovery is unavailable. */ }
@@ -146,6 +150,13 @@ export function useNoteSession(onSaved: (info: NoteInfo) => void, onSaveError: (
           if (nextDelay !== undefined && (status === undefined || status === 423 || status >= 500)) {
             cancelSave();
             retrying.current = true;
+            setSaveStatus('retrying');
+            if(attempt===0){
+              const checkpoint=unsaved();
+              if(checkpoint)void api.keepDraft(checkpoint).then(saved=>{
+                if(generationRef.current===generation&&dirtyRef.current?.content===checkpoint.content)setRecoveryId(saved.id);
+              }).catch(()=>{});
+            }
             scheduleAutosave(path, generation, nextDelay, attempt + 1);
           } else {
             cancelSave();
@@ -191,6 +202,8 @@ export function useNoteSession(onSaved: (info: NoteInfo) => void, onSaveError: (
     contentRef.current = n.content;
     noteRef.current = n;
     setNote(n);
+    setLastSavedAt(Number.isFinite(n.modified)?n.modified*1000:0);
+    setRecoveryId('');
     setSaveStatus('saved');
     setSaveError('');
   };
@@ -267,7 +280,7 @@ export function useNoteSession(onSaved: (info: NoteInfo) => void, onSaveError: (
   // but must never be serialized as a synthetic note-body keepalive request.
   const hasPendingWrites = () => pendingWritesRef.current > 0;
 
-  return { note, saveStatus, saveError, onEdit, noteRef, contentRef, editorRef, hasPendingWrites, generation: generationRef.current, flush, cancelSave, onChange, load, clear, unsaved, persist, setMeta, setProp, addAttachment, replaceContent };
+  return { note, saveStatus, saveError, lastSavedAt, recoveryId, onEdit, noteRef, contentRef, editorRef, hasPendingWrites, generation: generationRef.current, flush, cancelSave, onChange, load, clear, unsaved, persist, setMeta, setProp, addAttachment, replaceContent };
 }
 
 export type NoteSession = ReturnType<typeof useNoteSession>;
