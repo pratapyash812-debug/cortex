@@ -3,6 +3,7 @@ import type {Plugin} from 'unified';
 import type {Root} from 'mdast';
 import {decodeTextStyle,encodeTextStyle,paragraphLayout,TEXT_FONTS,textStyle} from './writingStyles';
 interface Ast {type:string;value?:string;children?:Ast[];cortexLayout?:ReturnType<typeof paragraphLayout>}
+const blockContainers = new Set(['root', 'listItem', 'blockquote', 'footnoteDefinition']);
 function transform(node:Ast){
   if(!node.children||['code','inlineCode','math','inlineMath'].includes(node.type))return;
   const suffix=node.children[node.children.length-1];
@@ -12,6 +13,11 @@ function transform(node:Ast){
   if(layout){
     node.cortexLayout=paragraphLayout(layout[1],layout[2]);
     node.children.pop();
+  }
+  // Remark can put raw HTML on its own line inside a list or quote.
+  // Milkdown represents HTML as an inline atom, which needs a paragraph.
+  if(blockContainers.has(node.type)){
+    node.children=node.children.map(child=>child.type==='html'?{type:'paragraph',children:[child]}:child);
   }
   node.children.forEach(transform);
   const children=node.children.flatMap(n=>n.type==='text'&&n.value?.includes('==')?n.value.split(/(==)/).filter(Boolean).map(value=>({type:value==='=='?'cortexDelimiter':'text',value})): [n]);

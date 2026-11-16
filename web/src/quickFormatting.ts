@@ -23,6 +23,7 @@ export function quickFormattingPlugin(
   show: (state: FormattingPopup | null) => void,
   popup: () => HTMLElement | null,
   report?: (state: FormattingState) => void,
+  edited?: () => void,
 ) {
   return $prose(() => new Plugin({
     view(view) {
@@ -194,7 +195,10 @@ export function quickFormattingPlugin(
       }, options);
 
       return {
-        update: schedule,
+        update(current, previous) {
+          if (current.state.doc !== previous.doc) edited?.();
+          schedule();
+        },
         destroy() {
           listeners.abort();
           win.cancelAnimationFrame(frame);

@@ -1,6 +1,6 @@
 
 import {lazy,Suspense,useEffect,useMemo,useRef,useState} from 'react';
-import {Plus,Search,Pin,Settings as Gear,Sigma,MoreHorizontal,Menu,ChevronLeft,ChevronRight} from 'lucide-react';
+import {Plus,Search,Pin,Settings as Gear,Sigma,MoreHorizontal,Menu,ChevronLeft,ChevronRight,Save} from 'lucide-react';
 import {api,type NoteInfo,type CanvasInfo,type Settings,type DocumentSearch,type DocumentHit} from './api';
 import {useNoteSession} from './noteSession';
 import {installNoteCloseGuard} from './noteClose';
@@ -59,9 +59,25 @@ export default function App(){
   const documentRef=useRef<HTMLDivElement>(null);
   const settingsRef=useRef(settings);settingsRef.current=settings;
   const fail=(e:unknown)=>setError(e instanceof Error?e.message:String(e));
-  const session=useNoteSession(info=>{setNotes(list=>list.map(n=>n.path===info.path?{...n,...info}:n));window.dispatchEvent(new Event('cortex-data-changed'));},fail);
+  const session=useNoteSession(info=>{setNotes(list=>list.map(n=>n.path===info.path?{...n,...info}:n));window.dispatchEvent(new Event('cortex-data-changed'));});
   const note=session.note,nav=useRef(0),creating=useRef(false),restored=useRef(false),sketching=useRef(false);
   const flushSavedWork=async()=>{await session.flush();await flushOtherSaves();};
+  const saveInProgress=useRef(false);
+  const [manualSave,setManualSave]=useState(false);
+  const [manualSavedPath,setManualSavedPath]=useState('');
+  const savePage=async()=>{
+    const path=session.noteRef.current?.path;
+    if(saveInProgress.current||!path||pdfReader)return;
+    saveInProgress.current=true;
+    setManualSave(true);
+    setManualSavedPath('');
+    try{
+      await flushSavedWork();
+      if(session.noteRef.current?.path===path&&!session.unsaved()&&!session.hasPendingWrites())setManualSavedPath(path);
+    }catch(e){fail(e);}
+    finally{saveInProgress.current=false;setManualSave(false);}
+  };
+  useEffect(()=>setManualSavedPath(''),[session.generation]);
   const settlePage=async()=>{
     // A save can finish after the user has already typed another character.
     while(session.unsaved()||session.hasPendingWrites())await session.flush();
@@ -196,7 +212,8 @@ export default function App(){
     const removeCloseGuard=installNoteCloseGuard(session);
     const key=(e:KeyboardEvent)=>{if(e.defaultPrevented||e.isComposing||document.querySelector('.overlay'))return;const mod=e.ctrlKey||e.metaKey;if(!mod)return;
       if(e.altKey)return;
-      if(e.shiftKey&&(e.key==='PageUp'||e.key==='PageDown')&&pageIndex>=0&&!pdfReader){e.preventDefault();pageStep(e.key==='PageUp'?-1:1);}
+      if(!e.shiftKey&&e.key.toLowerCase()==='s'){e.preventDefault();if(!e.repeat)void savePage();}
+      else if(e.shiftKey&&(e.key==='PageUp'||e.key==='PageDown')&&pageIndex>=0&&!pdfReader){e.preventDefault();pageStep(e.key==='PageUp'?-1:1);}
       else if(e.shiftKey&&e.key.toLowerCase()==='n'){e.preventDefault();void newNote();}
       else if(e.key.toLowerCase()==='k'){e.preventDefault();setSidebar(true);setTimeout(()=>document.getElementById('note-search')?.focus(),0);}
       else if(e.key.toLowerCase()==='f'&&(session.noteRef.current||pdfReader)){e.preventDefault();if(pdfReader)document.getElementById('pdf-find')?.focus();else showFind();}};
@@ -266,13 +283,16 @@ export default function App(){
         </div>
       </section>:<SubjectPages key={scope} navigation={navigation} subject={scope} current={pdfReader?'':note?.path??''} busy={busy||starting} onOpen={path=>void open(path)} onAdd={()=>void newNote()}/>}
     </div>}
-    <main className="lean-main"><header className="lean-topbar"><button className="icon" aria-label={sidebar?'Hide notebook navigation':'Show notebook navigation'} aria-expanded={sidebar} onClick={()=>setSidebar(v=>!v)}><Menu size={18}/></button><nav className="note-breadcrumbs grow" aria-label="Note location">{pdfReader?<><button onClick={()=>note?void open(note.path):setPdfReader(null)}>← Back to note</button><span>{pdfReader.title}</span></>:<><span>Notes</span>{note&&<span> / {navigation.subject(note.path)||'Unfiled'} / {note.title}</span>}</>}</nav>{note&&<span className={`note-save-state ${session.saveStatus}`} role="status">{session.saveStatus==='saved'?'Saved':session.saveStatus==='saving'?'Saving…':'Not saved — keep this window open'}</span>}<button className="btn ghost small topbar-new-note" disabled={busy||starting} onClick={()=>void newNote()}><Plus size={16}/> New page</button></header>
-      {error&&<div className="error lean-notice" role="alert">{error} <button onClick={()=>setDialog('recovery')}>Recovery</button><button aria-label="Dismiss error" onClick={()=>setError('')}>×</button></div>}{notice&&<div className="lean-notice" role="status">{notice}<button aria-label="Dismiss notice" onClick={()=>setNotice('')}>×</button></div>}
+    <main className="lean-main"><header className="lean-topbar"><button className="icon" aria-label={sidebar?'Hide notebook navigation':'Show notebook navigation'} aria-expanded={sidebar} onClick={()=>setSidebar(v=>!v)}><Menu size={18}/></button><nav className="note-breadcrumbs grow" aria-label="Note location">{pdfReader?<><button onClick={()=>note?void open(note.path):setPdfReader(null)}>← Back to note</button><span>{pdfReader.title}</span></>:<><span>Notes</span>{note&&<span> / {navigation.subject(note.path)||'Unfiled'} / {note.title}</span>}</>}</nav>{note&&!pdfReader&&<div className="page-save-controls">
+        <span className={`note-save-state ${session.saveStatus}`} role="status">{manualSave||session.saveStatus==='saving'?'Saving…':session.saveStatus==='error'?'Save needs attention':manualSavedPath===note.path?'Saved just now':'Saved'}</span>
+        <button type="button" className="btn ghost small page-save-button" aria-label="Save page" title="Save page (Ctrl/Cmd+S)" aria-keyshortcuts="Control+S Meta+S" disabled={manualSave} onClick={()=>void savePage()}><Save size={15} aria-hidden="true"/> Save</button>
+      </div>}<button className="btn ghost small topbar-new-note" disabled={busy||starting} onClick={()=>void newNote()}><Plus size={16}/> New page</button></header>
+      {(session.saveError||error)&&<div className="error lean-notice" role="alert">{session.saveError||error} <button onClick={()=>setDialog('recovery')}>Recovery</button>{!session.saveError&&<button aria-label="Dismiss error" onClick={()=>setError('')}>×</button>}</div>}{notice&&<div className="lean-notice" role="status">{notice}<button aria-label="Dismiss notice" onClick={()=>setNotice('')}>×</button></div>}
       <div className="lean-document" ref={documentRef}>{pdfReader?<Suspense fallback={<p role="status">Opening PDF…</p>}><div className="standalone-pdf"><h1>{pdfReader.title}</h1><PdfView key={`${pdfReader.path}:${pdfReader.page}`} path={pdfReader.path} url={'/files/'+pdfReader.path.split('/').map(encodeURIComponent).join('/')} initialPage={pdfReader.page} initialQuery={query} standalone/></div></Suspense>:note?<><div className="document-kind">Page</div><div className="lean-title"><button title="Rename note" onClick={()=>begin('rename')}>{note.title}</button><button className="icon" aria-label={note.pinned?'Unpin note':'Pin note'} aria-pressed={note.pinned} onClick={()=>action(()=>session.setMeta({pinned:!note.pinned}))}><Pin size={16}/></button></div>
         <div className="document-toolbar" role="toolbar" aria-label="Formatting"><WritingTools key={note.path} state={formatting?.path===note.path?formatting.state:undefined} onShortcuts={()=>setDialog('shortcuts')} format={key=>session.editorRef.current?.format(key)} meta={note.meta} onStyle={style=>session.setMeta({documentStyle:style})} onError={fail}/>
           <button className="btn ghost small" onClick={()=>session.editorRef.current?.requestEquation()}><Sigma size={16}/> Equation</button><details className="lean-menu"><summary>Insert</summary><div>{(['table','figure','image'] as const).map(k=><button key={k} onClick={e=>{insert(k);dismissMenu(e);}}>{k==='figure'?'Graph / chart':k==='table'?'Table':'Image'}</button>)}<button onClick={e=>{void sketch();dismissMenu(e);}}>Sketch</button><label>Attachment<input type="file" hidden onChange={e=>{const f=e.target.files?.[0];if(f)void attach(f);e.target.value='';e.currentTarget.closest('details')?.removeAttribute('open');}}/></label></div></details>
           <button className="btn ghost small" title="Find in this note (Ctrl+F)" aria-expanded={find} onClick={()=>find?setFind(false):showFind()}>Find</button><span className="grow"/><details className="lean-menu"><summary aria-label="Note options"><MoreHorizontal size={18}/></summary><div>{([['details','Sources & links'],['move','Move page'],['history','Version history']] as const).map(([d,label])=><button key={d} disabled={d==='move'&&navigation.children.has(note.path)&&!navigation.parents.has(note.path)} onClick={e=>{begin(d);dismissMenu(e);}}>{label}</button>)}<button onClick={()=>action(async()=>{await flushSavedWork();window.open(`/api/export/html?path=${encodeURIComponent(note.path)}&inline=1&print=1`,'_blank');})}>Export / Print PDF</button><button onClick={()=>action(async()=>{await flushSavedWork();const a=document.createElement('a');a.href=`/api/export/html?path=${encodeURIComponent(note.path)}`;a.click();})}>Export HTML</button><button onClick={()=>action(async()=>{await flushSavedWork();const a=document.createElement('a');a.href=`/api/export/docx?path=${encodeURIComponent(note.path)}`;a.click();})}>Export Word (.docx)</button><button onClick={()=>setDialog('delete')}>Move to Trash</button></div></details></div>
-        {find&&<FindInNote key={note.path} initialQuery={findSeed} ready={editorPath===note.path} editorRef={session.editorRef} onClose={()=>setFind(false)}/>}<Suspense fallback={<p role="status">Opening note…</p>}><Editor key={`${note.path}:${session.generation}`} path={note.path} initial={note.content} attachments={note.attachments} notes={notes} handleRef={session.editorRef} autoFocus={focusPath===note.path} onReady={()=>editorReady(note.path)} onChange={md=>session.onChange(note.path,session.generation,md)} onOpenLink={openLink} onEquationRequest={setEquation} onInsertRequest={setInsertion} onCanvasRequest={()=>void sketch()} documentStyle={note.meta} onWordCount={setWords} onFormatting={state=>setFormatting({path:note.path,state})}/></Suspense><footer className="document-status">
+        {find&&<FindInNote key={note.path} initialQuery={findSeed} ready={editorPath===note.path} editorRef={session.editorRef} onClose={()=>setFind(false)}/>}<Suspense fallback={<p role="status">Opening note…</p>}><Editor key={`${note.path}:${session.generation}`} path={note.path} initial={note.content} attachments={note.attachments} notes={notes} handleRef={session.editorRef} autoFocus={focusPath===note.path} onReady={()=>editorReady(note.path)} onEdit={()=>{setManualSavedPath('');session.onEdit(note.path,session.generation);}} onChange={md=>session.onChange(note.path,session.generation,md)} onOpenLink={openLink} onEquationRequest={setEquation} onInsertRequest={setInsertion} onCanvasRequest={()=>void sketch()} documentStyle={note.meta} onWordCount={setWords} onFormatting={state=>setFormatting({path:note.path,state})}/></Suspense><footer className="document-status">
           <span>{editorPath===note.path?`${words} ${words===1?'word':'words'}`:''}</span>
           {pageIndex>=0&&pageSequence.length>1&&<div className="document-page-step">
             <button type="button" className="icon" aria-label="Previous page" title="Previous page (Ctrl/Cmd+Shift+Page Up)" disabled={pageIndex===0||busy} onClick={()=>pageStep(-1)}><ChevronLeft size={15}/></button>

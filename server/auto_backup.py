@@ -14,7 +14,7 @@ POLL=30.0
 class BackupService:
     def __init__(self,vault,destination=None,background=False,retention=7,debounce=DEBOUNCE,min_interval=MIN_INTERVAL):
         self.vault=vault;self.identifier=snap.vault_id(vault.root)
-        base=Path(os.environ.get('LOCALAPPDATA',str(Path.home()/'.local/share')))/'Cortex/Backups'
+        base=Path(os.environ.get('LOCALAPPDATA',str(Path.home()/'.local/share')))/'Cortexez/Backups'
         self.destination=(Path(destination) if destination else base/self.identifier).resolve()
         if self.destination==vault.root or self.destination.is_relative_to(vault.root):raise ValueError('Backup destination must be outside the notebook')
         self.background=background;self.retention=max(1,int(retention));self.debounce=debounce;self.min_interval=min_interval

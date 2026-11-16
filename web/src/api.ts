@@ -224,9 +224,10 @@ export class ApiError extends Error {
   conflict?: { path: string; currentRevision: string | null };
 }
 
-async function call<T>(method: string, url: string, body?: unknown): Promise<T> {
+async function call<T>(method: string, url: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   const res = await fetch(url, {
     method,
+    signal,
     headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
@@ -251,6 +252,7 @@ export const api = {
   documentSearch:(query:string,path='')=>call<DocumentSearch>('GET',`/api/documents/search?q=${enc(query)}${path?'&path='+enc(path):''}`),
   documentStatus:()=>call<DocumentSearch>('GET','/api/documents/status'),
   backupStatus:()=>call<BackupStatus>('GET','/api/backups/status'),
+  keepDraft:(draft:{path:string;content:string;baseRevision?:string})=>call<{id:string}>('POST','/api/recovery/draft',draft,AbortSignal.timeout(10000)),
   runBackup:()=>call<BackupStatus&{accepted:boolean}>('POST','/api/backups/run',{}),
   previewFigure: (config: FigureConfig) => call<{config: FigureConfig; svg: string; summary: string}>('POST', '/api/figures/preview', config),
   saveFigure: (path: string, config: FigureConfig) => call<FigureSaved>('POST', '/api/figures', {path, config}),
@@ -265,7 +267,7 @@ export const api = {
   reorderSheets: (primary: string, order: string[]) => call<NotebookView>('POST', '/api/notebook/reorder', { primary, order }),
   removeSheet: (path: string) => call<NotebookView>('DELETE', `/api/notebook/sheet?path=${enc(path)}`),
   note: (path: string) => call<Note>('GET', `/api/note?path=${enc(path)}`),
-  save: (path: string, content: string, meta?: Record<string, unknown>, baseRevision?: string) => call<NoteInfo>('PUT', '/api/note', { path, content, meta, ...(baseRevision !== undefined ? { baseRevision } : {}) }),
+  save: (path: string, content: string, meta?: Record<string, unknown>, baseRevision?: string) => call<NoteInfo>('PUT', '/api/note', { path, content, meta, ...(baseRevision !== undefined ? { baseRevision } : {}) }, AbortSignal.timeout(10000)),
   create: (folder: string, title: string, content = '') => call<Note>('POST', '/api/note', { folder, title, content }),
   remove: (path: string) => call('DELETE', `/api/note?path=${enc(path)}`),
   move: (from: string, to: string) => call<Note>('POST', '/api/move', { from, to }),

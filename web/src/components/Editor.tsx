@@ -63,6 +63,7 @@ interface Props {
   attachments: Record<string, string>;
   notes: NoteInfo[];
   onChange: (markdown: string) => void;
+  onEdit?: () => void;
   onOpenLink: (target: string, newTab?: boolean) => void;
   /** Opens a note by its vault path — used by Deep research to open a cited source note. */
   onOpenNote?: (path: string) => void;
@@ -101,7 +102,7 @@ export function preloadEditor() {
 }
 
 // Block editor (slash menu, drag handles, tables, code, images) with Obsidian-style [[links]].
-export function Editor({ path, initial, attachments, notes, onChange, onOpenLink, handleRef, onEquationRequest, onInsertRequest, autoFocus = false, onReady,documentStyle={},onWordCount,onFormatting }: Props) {
+export function Editor({ path, initial, attachments, notes, onChange, onEdit, onOpenLink, handleRef, onEquationRequest, onInsertRequest, autoFocus = false, onReady,documentStyle={},onWordCount,onFormatting }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const crepeRef = useRef<Crepe | null>(null);
   const toolbar = useRef<HTMLDivElement>(null);
@@ -120,6 +121,8 @@ export function Editor({ path, initial, attachments, notes, onChange, onOpenLink
   const insertCallback = useRef(onInsertRequest);
   insertCallback.current = onInsertRequest;
   const requestInsertRef = useRef<(kind: InsertKind, position?: number) => boolean>(() => false);
+  const editRef = useRef(onEdit);
+  editRef.current = onEdit;
   const changeRef = useRef(onChange);
   changeRef.current = onChange;
   const openLinkRef = useRef(onOpenLink);
@@ -195,7 +198,9 @@ export function Editor({ path, initial, attachments, notes, onChange, onOpenLink
     })
       .use(writingRemark).use(underlineMark).use(highlightMark).use(textStyleMark)
       .use(writingLayoutSchema).use(writingListView)
-      .use(quickFormattingPlugin(setFormattingPopup, () => toolbar.current, state => formattingCallback.current?.(state)))
+      .use(quickFormattingPlugin(setFormattingPopup, () => toolbar.current, state => formattingCallback.current?.(state), () => {
+        if (Date.now() > quiet.current) editRef.current?.();
+      }))
       .use(findHighlightsPlugin).use(calloutPlugin).use(footnotePlugin).use(inlineCanvasPlugin(() => ({notes: notesRef.current, openNote: (target, newTab) => openLinkRef.current(target, newTab)}))).use(embedPlugin).use(audioPlugin(() => attachmentsRef.current)).use(pdfPlugin(() => attachmentsRef.current));
     const mathLines = singleLineMath(initial);
     let alive = true;
@@ -471,10 +476,14 @@ export function Editor({ path, initial, attachments, notes, onChange, onOpenLink
   return (
     <div style={{fontFamily:PAGE_FONTS[style.font]||undefined,'--editor-font-size':style.size?`${style.size}px`:undefined} as React.CSSProperties} className="editor-host" onDoubleClickCapture={onDoubleClickCapture} onKeyUp={onKeyUp} onInput={onKeyUp} onKeyDownCapture={onKeyDownCapture} onClickCapture={onClickCapture} onAuxClick={onAuxClick} onMouseDownCapture={onMouseDownCapture} onMouseOver={onMouseOver} onMouseOut={onMouseOut} onKeyDown={() => hidePreview()}>
       <div ref={host} />
-      {editorFailed && <p role="alert">This page could not open. <button className="btn ghost small" onClick={() => {
-        setEditorFailed(false);
-        setEditorAttempt(attempt => attempt + 1);
-      }}>Retry editor</button></p>}
+      {editorFailed && <div className="editor-source-fallback">
+        <p role="alert">The formatted editor could not open this page. The saved Markdown is available below.</p>
+        <button className="btn ghost small" onClick={() => {
+          setEditorFailed(false);
+          setEditorAttempt(attempt => attempt + 1);
+        }}>Retry editor</button>
+        <details open><summary>Saved Markdown</summary><pre>{initial || 'This page is empty.'}</pre></details>
+      </div>}
       {formattingPopup && <FloatingWritingTools popup={formattingPopup} toolbar={toolbar} format={action => formatRef.current(action)} clipboard={clipboard}/>}
       {clipboardMessage && <div className="editor-clipboard-feedback" role="status">{clipboardMessage}</div>}
       {preview && (

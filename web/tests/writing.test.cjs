@@ -17,5 +17,12 @@ test('underline and highlighting roundtrip Markdown with nested formatting and p
    assert.deepEqual(tree.children[0].cortexLayout,{align:'center',indent:1});
    assert.equal(tree.children[0].children.length,1);
    assert.equal(tree.children[1].cortexLayout,undefined);
+   const note='- **A synthetic list item**\n\n  <br>\n\n  A second paragraph.\n\n<!--retained-->\n';
+   const parsed=await p.run(p.parse(note));
+   const list=parsed.children[0].children[0];
+   assert.deepEqual(list.children.map(child=>child.type),['paragraph','paragraph','paragraph']);
+   assert.equal(list.children[1].children[0].value,'<br>');
+   assert.equal(parsed.children[1].children[0].value,'<!--retained-->');
+   assert.match(String(await p.process(note)),/<br>/);
  } finally { env.restore(); }
 });

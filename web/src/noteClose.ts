@@ -12,7 +12,9 @@ export function installNoteCloseGuard(session:Pick<NoteSession,'unsaved'|'hasPen
     try{if(session.unsaved()||session.hasPendingWrites()){warn(event);void session.flush().catch(()=>{try{return preserve(session.unsaved());}catch{return undefined;}});}}
     catch{warn(event);}
   };
+  const hidden=()=>{if(document.visibilityState==='hidden')close(new Event('cortex-before-close',{cancelable:true}));};
+  document.addEventListener('visibilitychange',hidden);
   window.addEventListener('beforeunload',unload);window.addEventListener('cortex-before-close',close);
   document.documentElement.dataset.cortexCloseGuard='ready';
-  return()=>{window.removeEventListener('beforeunload',unload);window.removeEventListener('cortex-before-close',close);delete document.documentElement.dataset.cortexCloseGuard;};
+  return()=>{document.removeEventListener('visibilitychange',hidden);window.removeEventListener('beforeunload',unload);window.removeEventListener('cortex-before-close',close);delete document.documentElement.dataset.cortexCloseGuard;};
 }

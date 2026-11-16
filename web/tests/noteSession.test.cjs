@@ -42,7 +42,7 @@ function createRuntime(saveImpl = async path => ({ path, title: path })) {
       return [states[index], next => { states[index] = typeof next === 'function' ? next(states[index]) : next; }];
     },
   };
-  const api = { save: (...args) => saveImpl(...args) };
+  const api = { save: (...args) => saveImpl(...args), keepDraft: async () => ({id:'draft'}) };
   const loaded = new Module(sourcePath, module);
   loaded.filename = sourcePath;
   loaded.paths = Module._nodeModulePaths(path.dirname(sourcePath));
@@ -201,7 +201,7 @@ test('a failed debounced save stays dirty and flush retries the same body', asyn
     { path: 'College — Calculus Lab.md', content: 'retryable edit' },
     { path: 'College — Calculus Lab.md', content: 'retryable edit' },
   ]);
-  assert.deepEqual(errors, ['temporary write failure']);
+  assert.deepEqual(errors, []);
   assert.equal(session.unsaved(), null);
 });
 
@@ -232,6 +232,8 @@ test('an in-flight old save cannot clear a newer edit in the same note session',
   assert.deepEqual(calls, [{ path: 'College — Calculus Lab.md', content: 'first edit' }]);
 
   firstResolve({ path: 'College — Calculus Lab.md', title: 'College' });
+  await drainPromises();
+  runtime.runTimers();
   await secondStarted;
   assert.deepEqual(calls, [
     { path: 'College — Calculus Lab.md', content: 'first edit' },
@@ -358,6 +360,50 @@ test('pinning immediately after typing never writes the previous body back', asy
 
 const drainPromises = () => new Promise(resolve => setImmediate(resolve));
 
+test('a continuous series of editor edits saves the latest snapshot without resetting its timer', async t => {
+  const contents = [];
+  const runtime = createRuntime(async (path, content) => {
+    contents.push(content);
+    return {path, title:path};
+  });
+  t.after(runtime.cleanup);
+  let session = runtime.render();
+  session.load(note('A.md','Original'));
+  session = runtime.render();
+  let live = 'First edit';
+  session.editorRef.current = {path:'A.md',readMarkdown:()=>live};
+  session.onEdit('A.md',session.generation);
+  const [timer] = runtime.timers.keys();
+  live = 'Latest edit before the pause';
+  session.onEdit('A.md',session.generation);
+  assert.deepEqual([...runtime.timers.keys()],[timer]);
+  runtime.runTimers();
+  await drainPromises();
+  assert.deepEqual(contents,[live]);
+  assert.equal(session.unsaved(),null);
+});
+
+test('failed autosave retries automatically and keeps the latest unsaved text in Recovery', async t => {
+  const saves = [], drafts = [];
+  const runtime = createRuntime(async (_path, content) => {saves.push(content);throw new Error('Disk busy');});
+  runtime.api.keepDraft = async draft => {drafts.push(draft);return {id:'example'};};
+  t.after(runtime.cleanup);
+  let session = runtime.render();
+  session.load({...note('A.md','Original'),revision:'rev'});
+  session = runtime.render();
+  session.onChange('A.md',session.generation,'First edit');
+  runtime.runTimers();
+  await drainPromises();
+  session.onChange('A.md',session.generation,'Latest edit');
+  for(let i=0;i<3;i++){
+    runtime.runTimers();
+    await drainPromises();
+  }
+  assert.deepEqual(saves,['First edit','Latest edit','Latest edit','Latest edit']);
+  assert.deepEqual(drafts,[{path:'A.md',content:'Latest edit',baseRevision:'rev'}]);
+  assert.match(runtime.render().saveError,/edits is in Recovery/);
+});
+
 test('repeated delayed editor notifications do not rewrite an acknowledged body',async t=>{
  let calls=0;const runtime=createRuntime(async()=>{calls++;return{path:'A.md',title:'A',revision:'v2'};});t.after(runtime.cleanup);let session=runtime.render();session.load({...note('A.md','original'),revision:'v1'});session=runtime.render();session.onChange('A.md',session.generation,'latest');await session.flush();session.onChange('A.md',session.generation,'latest');await session.flush();assert.equal(calls,1);assert.equal(session.unsaved(),null);
 });
@@ -387,6 +433,7 @@ test('pinning while a save is pending cannot overwrite a newer completed autosav
   runtime.runTimers();
   release();
   await pinned;
+  runtime.runTimers();
   await drainPromises();
   assert.equal(diskBody, 'newer student explanation');
   assert.ok(calls.some(call => call.meta?.pinned));

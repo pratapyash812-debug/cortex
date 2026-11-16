@@ -2,25 +2,30 @@ import { useRef, useState } from 'react';
 import { api, type Note, type NoteInfo, type PropValue } from './api';
 import type { EditorHandle } from './components/Editor';
 
+const AUTOSAVE_INTERVAL = 350;
+const RETRY_DELAYS = [1000, 2500, 5000];
+
 /**
- * One open note and its saving: the note itself, the text being typed, and the debounced save.
+ * Track the open note, the live editor text, and the ordered saves.
  * Each pane of the window has its own session, so two notes side by side never share a save timer.
  */
 export function useNoteSession(onSaved: (info: NoteInfo) => void, onSaveError: (error: unknown) => void = () => {}) {
   const [note, setNote] = useState<Note | null>(null);
   const [saveStatus, setSaveStatus] = useState<'saved'|'saving'|'error'>('saved');
+  const [saveError, setSaveError] = useState('');
   const noteRef = useRef<Note | null>(null);
   const generationRef = useRef(0);
   const revisionRef = useRef<{ path: string; generation: number; revision?: string; content: string } | null>(null);
   noteRef.current = note;
   const contentRef = useRef('');
   const timer = useRef<number | undefined>(undefined);
+  const retrying = useRef(false);
   const dirtyRef = useRef<{ path: string; content: string } | null>(null);
   const saveQueue = useRef<Promise<void>>(Promise.resolve());
   const pendingWritesRef = useRef(0);
   const editorRef = useRef<EditorHandle | null>(null);
 
-  const persist = (path: string, content: string, meta?: Record<string, unknown>, captureLatest = false) => {
+  const persist = (path: string, content: string, meta?: Record<string, unknown>, captureLatest = false, automatic = false) => {
     // Count intent synchronously, including time spent waiting behind another
     // save. A clean-body pin is still unsafe to abandon before its write settles.
     pendingWritesRef.current++;
@@ -53,13 +58,22 @@ export function useNoteSession(onSaved: (info: NoteInfo) => void, onSaveError: (
     };
     const pending = saveQueue.current.then(save, save);
     saveQueue.current = pending.then(() => undefined, () => undefined);
-    return pending.catch(error => { setSaveStatus('error'); onSaveError(error); throw error; }).finally(() => {
-      pendingWritesRef.current--;
-      if (!pendingWritesRef.current && !dirtyRef.current) setSaveStatus('saved');
-    });
+    return pending.then(info => {
+      if (ownsCurrent() && !dirtyRef.current && timer.current === undefined && pendingWritesRef.current === 1) {
+        setSaveStatus('saved');
+        setSaveError('');
+      }
+      return info;
+    }, error => {
+      if (owner && ownsCurrent() && !automatic) {
+        void reportFailure(error, owner.generation);
+        onSaveError(error);
+      }
+      throw error;
+    }).finally(() => { pendingWritesRef.current--; });
   };
 
-  const cancelSave = () => { window.clearTimeout(timer.current); timer.current = undefined; };
+  const cancelSave = () => { window.clearTimeout(timer.current); timer.current = undefined; retrying.current = false; };
 
   /** Capture edits before Milkdown's delayed notification, including on window close. */
   const captureEditor = () => {
@@ -83,11 +97,74 @@ export function useNoteSession(onSaved: (info: NoteInfo) => void, onSaveError: (
   const flush = async () => {
     const pending = captureEditor();
     cancelSave();
-    if (pending) await persist(pending.path, pending.content);
+    if (pending) await persist(pending.path, pending.content, undefined, true);
     await saveQueue.current;
+    if (!dirtyRef.current && timer.current === undefined && !pendingWritesRef.current && !retrying.current) {
+      setSaveStatus('saved');
+      setSaveError('');
+    }
   };
 
-  /** The editor changed: save shortly after typing stops. */
+  const reportFailure = async (error: unknown, generation: number) => {
+    if (generationRef.current !== generation) return;
+    const detail = error instanceof Error ? error.message : String(error);
+    setSaveStatus('error');
+    setSaveError(detail);
+    try {
+      const draft = unsaved();
+      if (!draft) return;
+      await api.keepDraft(draft);
+      if (generationRef.current === generation && dirtyRef.current?.content === draft.content) {
+        setSaveError(`${detail} A copy of these edits is in Recovery.`);
+      }
+    } catch { /* The editor stays dirty if local recovery is unavailable. */ }
+  };
+
+  const scheduleAutosave = (path: string, generation: number, delay = AUTOSAVE_INTERVAL, attempt = 0): void => {
+    if (timer.current !== undefined) return;
+    timer.current = window.setTimeout(() => {
+      timer.current = undefined;
+      if (generationRef.current !== generation || noteRef.current?.path !== path) return;
+      if (pendingWritesRef.current) {
+        scheduleAutosave(path, generation, AUTOSAVE_INTERVAL, attempt);
+        return;
+      }
+      retrying.current = false;
+      void (async () => {
+        try {
+          const pending = captureEditor();
+          if (pending) await persist(path, pending.content, undefined, true, true);
+          else if (!pendingWritesRef.current && timer.current === undefined) {
+            setSaveStatus('saved');
+            setSaveError('');
+          }
+        } catch (error) {
+          if (generationRef.current !== generation) return;
+          if (!dirtyRef.current) { void reportFailure(error, generation); return; }
+          const status = (error as {status?: number} | null)?.status;
+          const nextDelay = RETRY_DELAYS[attempt];
+          if (nextDelay !== undefined && (status === undefined || status === 423 || status >= 500)) {
+            cancelSave();
+            retrying.current = true;
+            scheduleAutosave(path, generation, nextDelay, attempt + 1);
+          } else {
+            cancelSave();
+            void reportFailure(error, generation);
+            onSaveError(error);
+          }
+        }
+      })();
+    }, delay);
+  };
+
+  /** Begin a bounded save window on the first edit, even while typing continues. */
+  const onEdit = (path: string, generation: number) => {
+    if (generationRef.current !== generation || noteRef.current?.path !== path) return;
+    if (!retrying.current) setSaveStatus('saving');
+    scheduleAutosave(path, generation);
+  };
+
+  /** Milkdown supplies a serialized update for word count and change tracking. */
   const onChange = (path: string, generation: number, md: string) => {
     // A Milkdown update can be delivered after its editor was replaced. Never
     // infer the destination from the currently open note: the update belongs to
@@ -96,12 +173,12 @@ export function useNoteSession(onSaved: (info: NoteInfo) => void, onSaveError: (
     if (md === contentRef.current) return;
     contentRef.current = md;
     dirtyRef.current = md === revisionRef.current?.content && !pendingWritesRef.current ? null : { path, content: md };
-    setSaveStatus(dirtyRef.current || pendingWritesRef.current ? 'saving' : 'saved');
-    window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => {
-      timer.current = undefined;
-      if (generationRef.current === generation && noteRef.current?.path === path && dirtyRef.current) void persist(path, md).catch(() => {});
-    }, 600);
+    if (dirtyRef.current) onEdit(path, generation);
+    else {
+      cancelSave();
+      setSaveStatus('saved');
+      setSaveError('');
+    }
   };
 
   /** Show a note (replacing the one open). */
@@ -115,8 +192,9 @@ export function useNoteSession(onSaved: (info: NoteInfo) => void, onSaveError: (
     noteRef.current = n;
     setNote(n);
     setSaveStatus('saved');
+    setSaveError('');
   };
-  const clear = () => { cancelSave(); generationRef.current++; revisionRef.current = null; dirtyRef.current = null; editorRef.current = null; noteRef.current = null; setNote(null); contentRef.current = ''; };
+  const clear = () => { cancelSave(); generationRef.current++; revisionRef.current = null; dirtyRef.current = null; editorRef.current = null; noteRef.current = null; setNote(null); contentRef.current = ''; setSaveStatus('saved'); setSaveError(''); };
 
   /** A closing-window request keeps the current load's last acknowledged revision. */
   const unsaved = () => {
@@ -189,7 +267,7 @@ export function useNoteSession(onSaved: (info: NoteInfo) => void, onSaveError: (
   // but must never be serialized as a synthetic note-body keepalive request.
   const hasPendingWrites = () => pendingWritesRef.current > 0;
 
-  return { note, saveStatus, noteRef, contentRef, editorRef, hasPendingWrites, generation: generationRef.current, flush, cancelSave, onChange, load, clear, unsaved, persist, setMeta, setProp, addAttachment, replaceContent };
+  return { note, saveStatus, saveError, onEdit, noteRef, contentRef, editorRef, hasPendingWrites, generation: generationRef.current, flush, cancelSave, onChange, load, clear, unsaved, persist, setMeta, setProp, addAttachment, replaceContent };
 }
 
 export type NoteSession = ReturnType<typeof useNoteSession>;
