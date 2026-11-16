@@ -26,12 +26,11 @@ test('a moved document appears only in its logical subject, never its old physic
 test('page list opens individual documents, preserves the current marker and filters long subjects',()=>{
  const env=environment();let host;try{
   const notes=Array.from({length:15},(_,i)=>note(`Maths/Page ${i}.md`,`Page ${i}`));
-  const nav=env.load('navigation.ts').noteNavigation(notes,{}),opened=[];let added=0;
-  host=env.host(env.load('components/SubjectPages.tsx').SubjectPages,{navigation:nav,subject:'Maths',current:notes[4].path,busy:false,onOpen:p=>opened.push(p),onAdd:()=>added++});
+  const nav=env.load('navigation.ts').noteNavigation(notes,{}),opened=[];
+  host=env.host(env.load('components/SubjectPages.tsx').SubjectPages,{navigation:nav,subject:'Maths',current:notes[4].path,onOpen:p=>opened.push(p)});
   let tree=host.render();let pages=nodes(tree,n=>n.type==='button'&&n.props.className.startsWith('subject-page '));
   assert.equal(pages.length,15);assert.equal(pages[4].props['aria-current'],'page');
   pages[4].props.onClick();assert.deepEqual(opened,[notes[4].path]);
-  nodes(tree,n=>n.type==='button'&&n.props.id==='new-note')[0].props.onClick();assert.equal(added,1);
   nodes(tree,n=>n.type==='input')[0].props.onChange({target:{value:'Page 14'}});tree=host.render();
   pages=nodes(tree,n=>n.type==='button'&&n.props.className.startsWith('subject-page '));assert.equal(pages.length,1);
  }finally{host?.unmount();env.restore();}

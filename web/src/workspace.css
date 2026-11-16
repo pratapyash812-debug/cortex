@@ -1,0 +1,257 @@
+.workspace {
+  --workspace-topbar-height: 46px;
+  --workspace-editor-surface: var(--bg);
+  position: relative;
+}
+.workspace .workspace-main {
+  container: writing / inline-size;
+  background: var(--workspace-editor-surface);
+}
+.workspace .workspace-topbar {
+  height: var(--workspace-topbar-height);
+  padding: 6px 12px;
+  gap: 6px;
+  background: var(--surface-secondary);
+  z-index: 14;
+}
+.workspace .workspace-topbar > .icon,
+.workspace .workspace-panels > summary {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  flex: none;
+}
+.workspace .workspace-topbar > .icon[aria-pressed="true"],
+.workspace .workspace-topbar > .icon[aria-expanded="true"],
+.workspace .workspace-panels button[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--active);
+}
+.workspace .workspace-subject-picker {
+  min-width: 78px;
+  max-width: min(185px, 25%);
+  height: 30px;
+  padding-inline: 5px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--fg);
+  background: var(--surface-secondary);
+  font: inherit;
+  font-size: 12px;
+}
+.workspace .workspace-topbar .note-breadcrumbs {
+  flex: 1 1 35px;
+}
+.workspace .workspace-topbar .topbar-new-note {
+  display: inline-flex;
+  gap: 6px;
+  flex: none;
+}
+.workspace .workspace-search-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  background: var(--surface-secondary);
+  border-bottom: 1px solid var(--line);
+}
+.workspace .workspace-search-row .lean-search {
+  flex: 1;
+  max-width: 500px;
+}
+.workspace .workspace-subjects {
+  position: static;
+  box-shadow: none;
+  width: var(--workspace-subject-width);
+  padding: 12px 10px;
+  gap: 12px;
+  border-right: 0;
+  flex: none;
+}
+.workspace .workspace-page-panel {
+  position: relative;
+  display: flex;
+  flex: none;
+  min-height: 0;
+  background: var(--list);
+}
+.workspace .workspace-page-panel > .subject-pages {
+  width: var(--workspace-page-width);
+  border-right: 0;
+  padding-top: 12px;
+}
+.workspace .workspace-page-panel[data-overlay="true"] {
+  position: absolute;
+  z-index: 24;
+  inset: var(--workspace-topbar-height) auto 8px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 10px 34px #0004;
+  overflow: hidden;
+}
+.workspace:has(.workspace-search-row) .workspace-page-panel[data-overlay="true"] {
+  top: calc(var(--workspace-topbar-height) + 42px);
+}
+.workspace .workspace-page-panel[data-overlay="true"] > .subject-pages {
+  width: min(var(--workspace-page-width), calc(100vw - 24px));
+}
+.workspace .workspace-divider {
+  position: relative;
+  width: 1px;
+  flex: 0 0 1px;
+  min-height: 0;
+  background: var(--line);
+  cursor: col-resize;
+  touch-action: none;
+  z-index: 2;
+}
+.workspace .workspace-divider::before {
+  content: "";
+  position: absolute;
+  inset: 0 -4px;
+}
+.workspace .workspace-divider:is(:hover,:focus-visible) {
+  background: var(--accent);
+  outline: 2px solid var(--accent);
+}
+.workspace[data-resizing] {
+  cursor: col-resize;
+  user-select: none;
+}
+.workspace .subject-page.selected {
+  background: var(--active);
+  box-shadow: inset 2px 0 var(--accent);
+}
+.workspace .lean-title {
+  margin-block: 13px 0;
+}
+.workspace .lean-title > button:first-child {
+  font-size: clamp(21px, 3cqi, 28px);
+  line-height: 1.2;
+}
+.workspace .lean-document[data-width="wide"] {
+  --page-width: 100%;
+}
+.workspace .lean-document .milkdown .editor {
+  padding-top: 18px;
+}
+.workspace .document-toolbar {
+  flex: none;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 5px;
+  min-height: 42px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-secondary);
+  z-index: 12;
+}
+.workspace .document-toolbar > * {
+  flex: none;
+}
+.workspace .document-toolbar > :last-child {
+  margin-inline-start: auto;
+}
+.workspace .document-toolbar .writing-format {
+  border: 0;
+  padding-inline-end: 4px;
+}
+.workspace .document-toolbar .writing-format .icon {
+  min-width: 26px;
+}
+.workspace .ribbon-style select,
+.workspace .ribbon-menu-style select {
+  width: 140px;
+  max-width: 100%;
+  color: var(--fg);
+}
+.workspace .ribbon-format-options {
+  width: min(328px, calc(100cqi - 18px));
+  min-width: 0;
+}
+.workspace .ribbon-format-options .writing-format,
+.workspace .ribbon-format-options .writing-choices {
+  display: flex;
+  gap: 5px;
+  padding: 5px;
+}
+.workspace .ribbon-format-options .writing-choices {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.workspace .ribbon-format-options .icon {
+  width: auto;
+  text-align: center;
+  padding: 5px;
+}
+.workspace .ribbon-format-options select {
+  min-width: 0;
+}
+.workspace .ribbon-format-options .ribbon-menu-style,
+.workspace .ribbon-format-options .ribbon-menu-history,
+.workspace .ribbon-format-options .ribbon-menu-emphasis {
+  display: none;
+}
+.workspace .ribbon-format-menu > div,
+.workspace .ribbon-insert > div,
+.workspace .ribbon-page-menu > div {
+  left: auto;
+  right: 0;
+}
+
+@container writing (max-width: 800px) {
+  .workspace .document-toolbar > .ribbon-history {
+    display: none;
+  }
+  .workspace .ribbon-format-options .ribbon-menu-history {
+    display: flex;
+  }
+}
+@container writing (max-width: 730px) {
+  .workspace .document-toolbar > .ribbon-lists {
+    display: none;
+  }
+  .workspace .ribbon-format-menu > div {
+    left: 0;
+    right: auto;
+  }
+}
+@container writing (max-width: 640px) {
+  .workspace .document-toolbar > .ribbon-emphasis { display: none; }
+  .workspace .ribbon-format-options .ribbon-menu-emphasis { display: flex; }
+}
+@container writing (max-width: 480px) {
+  .workspace .page-save-button svg,
+  .workspace .topbar-new-note svg {
+    display: none;
+  }
+  .workspace .document-toolbar {
+    padding-inline: 6px;
+    gap: 3px;
+  }
+  .workspace .workspace-topbar {
+    padding-inline: 6px;
+    gap: 3px;
+  }
+  .workspace .page-save-controls .note-save-state {
+    max-width: 70px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+@container writing (max-width: 550px) {
+  .workspace .document-toolbar > .ribbon-style {
+    display: none;
+  }
+  .workspace .ribbon-format-options .ribbon-menu-style {
+    display: block;
+    padding: 5px;
+  }
+  .workspace .ribbon-format-menu > div {
+    left: 0;
+    right: auto;
+  }
+}

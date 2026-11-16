@@ -8,7 +8,7 @@ export function FindInNote({ editorRef, initialQuery, ready, onClose }: { editor
   const [query, setQuery] = useState(initialQuery);
   const [options, setOptions] = useState<FindOptions>({});
   const [result, setResult] = useState({ count: 0, index: -1 });
-  const [offset, setOffset] = useState(58);
+  const [offset, setOffset] = useState(8);
   const barRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const openerRef = useRef<HTMLElement | null>(typeof document === 'undefined' ? null : document.activeElement as HTMLElement);

@@ -878,6 +878,22 @@ class Vault:
                 if isinstance(raw[key], bool) or not isinstance(raw[key], (int, float)) or not lo <= raw[key] <= hi:
                     raise ValueError(f"{key} must be a number from {lo} to {hi}")
                 out[key] = int(raw[key])
+        workspace = raw.get("workspace")
+        if workspace is not None:
+            if not isinstance(workspace, dict):
+                raise ValueError("workspace must be an object")
+            layout = {}
+            for key, default in (("subjects", True), ("pages", True), ("wide", False)):
+                value = workspace.get(key, default)
+                if not isinstance(value, bool):
+                    raise ValueError(f"{key} must be true or false")
+                layout[key] = value
+            for key, default, lo, hi in (("subjectWidth", 188, 144, 300), ("pageWidth", 224, 172, 400)):
+                value = workspace.get(key, default)
+                if type(value) is not int or not lo <= value <= hi:
+                    raise ValueError(f"{key} must be an integer from {lo} to {hi}")
+                layout[key] = value
+            out["workspace"] = layout
         if "snippets" in raw:
             if not isinstance(raw["snippets"], dict) or not all(isinstance(k, str) and isinstance(v, bool) for k, v in raw["snippets"].items()):
                 raise ValueError("snippets must map file names to true or false")

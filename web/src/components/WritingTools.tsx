@@ -47,7 +47,8 @@ type Tool = (typeof history | typeof emphasis | typeof lists | typeof alignment 
 type ApplyFormat = (action: FormatAction) => void;
 const mac = /Mac/i.test(navigator.platform);
 
-function formatButtons(tools: readonly Tool[], format: ApplyFormat, state?: FormattingState) {
+function formatButtons(tools: readonly Tool[], format: ApplyFormat, state?: FormattingState, grouped = false) {
+  const first = tools.find(tool => tool.key==='undo' ? state?.canUndo : tool.key==='redo' ? state?.canRedo : true);
   return tools.map(({key, label, Icon}) => {
     const isAlignment = alignment.some(tool => tool.key === key);
     const pressed = isAlignment && state ? state.align === '' ? 'mixed' : key === state.align
@@ -56,7 +57,7 @@ function formatButtons(tools: readonly Tool[], format: ApplyFormat, state?: Form
     const disabled = key === 'undo' ? state && !state.canUndo : key === 'redo' ? state && !state.canRedo : false;
     return (
     <button type="button" className="icon" key={key} title={shortcut ? `${label} (${shortcutLabel(shortcut, mac)})` : label} aria-label={label} disabled={disabled}
-      aria-pressed={pressed} onMouseDown={event => event.preventDefault()} onClick={() => format(key)}><Icon size={16}/></button>
+      aria-pressed={pressed} tabIndex={grouped ? key===first?.key ? 0 : -1 : undefined} onMouseDown={event => event.preventDefault()} onClick={() => format(key)}><Icon size={16}/></button>
     );
   });
 }
@@ -148,11 +149,13 @@ export function FloatingWritingTools({popup, toolbar, format, clipboard}: {
   );
 }
 
-export function WritingTools({format, meta, onStyle, onError, state, onShortcuts}: {
+export function WritingTools({format, meta, onStyle, onError, state, onShortcuts, wide, onWidth}: {
   format: (action: FormatAction) => void;
   meta: Record<string, unknown>;
   state?: FormattingState;
   onShortcuts: () => void;
+  wide: boolean;
+  onWidth: (wide: boolean) => void;
   onStyle: (style: PageStyle) => Promise<void>;
   onError: (error: unknown) => void;
 }) {
@@ -168,18 +171,26 @@ export function WritingTools({format, meta, onStyle, onError, state, onShortcuts
     finally { pending.current = false; setSaving(false); }
   };
   return <>
-    <div className="writing-format" role="group" aria-label="Edit history">{formatButtons(history, format, state)}</div>
-    <div className="writing-format writing-choices" role="group" aria-label="Font and colour">
-      <FontChoices format={format} state={state}/>
-    </div>
-    <div className="writing-format" role="group" aria-label="Text emphasis">{formatButtons(emphasis, format, state)}</div>
-    <div className="writing-format" role="group" aria-label="Paragraph style">
-      <ParagraphChoices format={format} value={state?.block}/>
-    </div>
-    <div className="writing-format" role="group" aria-label="Lists and indentation">{formatButtons(lists, format, state)}</div>
-    <div className="writing-format" role="group" aria-label="Paragraph alignment">{formatButtons(alignment, format, state)}</div>
-    <details className="lean-menu"><summary>Page</summary>
+    <div className="writing-format ribbon-history" role="group" aria-label="Edit history" data-ribbon-group>{formatButtons(history, format, state, true)}</div>
+    <div className="ribbon-style"><ParagraphChoices format={format} value={state?.block}/></div>
+    <div className="writing-format ribbon-emphasis" role="group" aria-label="Text emphasis" data-ribbon-group>{formatButtons(emphasis.slice(0,3), format, state, true)}</div>
+    <div className="writing-format ribbon-lists" role="group" aria-label="Lists" data-ribbon-group>{formatButtons(lists.slice(0,3), format, state, true)}</div>
+    <details className="lean-menu ribbon-format-menu"><summary>Format</summary>
+      <div className="ribbon-format-options">
+        <div className="ribbon-menu-style"><ParagraphChoices format={format} value={state?.block}/></div>
+        <div className="ribbon-menu-history writing-format" role="group" aria-label="Edit history" data-ribbon-group>{formatButtons(history,format,state,true)}</div>
+        <div className="ribbon-menu-emphasis writing-format" role="group" aria-label="Text emphasis" data-ribbon-group>{formatButtons(emphasis.slice(0,3),format,state,true)}</div>
+        <div className="writing-format" role="group" aria-label="More text styles" data-ribbon-group>{formatButtons(emphasis.slice(3),format,state,true)}</div>
+        <div className="writing-choices" role="group" aria-label="Font and colour"><FontChoices format={format} state={state}/></div>
+        <div className="writing-format" role="group" aria-label="Lists and indentation" data-ribbon-group>{formatButtons(lists,format,state,true)}</div>
+        <div className="writing-format" role="group" aria-label="Paragraph alignment" data-ribbon-group>{formatButtons(alignment,format,state,true)}</div>
+      </div>
+    </details>
+    <details className="lean-menu ribbon-page-menu"><summary>Page</summary>
       <div className="page-appearance">
+        <label>Writing width<select aria-label="Writing width" value={wide?'wide':'reading'} onChange={event=>onWidth(event.target.value==='wide')}>
+          <option value="reading">Readable width</option><option value="wide">Full width</option>
+        </select></label>
         <label>Page font<select aria-label="Page font" value={style.font} disabled={saving} onChange={event => void change({...style, font: event.target.value as PageStyle['font']})}>
           <option value="default">Default</option><option value="sans">Sans serif</option><option value="serif">Serif</option><option value="mono">Monospace</option>
         </select></label>

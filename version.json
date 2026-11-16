@@ -1,7 +1,7 @@
 {
-  "version": "1.3.7",
+  "version": "1.3.8",
   "architecture": "arm64",
   "minimumMacOS": "13.0",
-  "sourceRelease": "1.3.7-save-recovery",
+  "sourceRelease": "1.3.8-writing-workspace",
   "personalDataIncluded": false
 }

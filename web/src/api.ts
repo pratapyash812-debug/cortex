@@ -32,7 +32,9 @@ export interface EmbedData {
   found: boolean; target?: string; path?: string; title?: string; heading?: string; content?: string;
   missingHeading?: boolean; attachments?: Record<string, string>;
 }
+import type {WorkspacePreferences} from './workspaceLayout';
 export interface Settings {
+  workspace?: WorkspacePreferences;
   theme: 'light' | 'dark' | 'system'; accent: string; fontSize: number; width: number; snippets: Record<string, boolean>;
   /** Local AI through Ollama. A model name of '' means the built-in default. */
   ai_enabled: boolean; write_model: string; ask_model: string; embed_model: string;

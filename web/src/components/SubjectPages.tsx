@@ -1,10 +1,10 @@
 import {useEffect,useMemo,useRef,useState} from 'react';
-import {FileText,Pin,Plus,Search,X} from 'lucide-react';
+import {FileText,Pin,Search,X} from 'lucide-react';
 import {subjectPages} from '../subjectPages';
 import {listFocusIndex,visiblePages,type PageOrder} from '../pageList';
 import type {NoteNavigation} from '../navigation';
 
-export function SubjectPages({navigation,subject,current,busy,onOpen,onAdd}:{navigation:NoteNavigation;subject:string;current:string;busy:boolean;onOpen:(path:string)=>void;onAdd:()=>void}){
+export function SubjectPages({navigation,subject,current,onOpen}:{navigation:NoteNavigation;subject:string;current:string;onOpen:(path:string)=>void}){
   const [query,setQuery]=useState('');
   const [order,setOrder]=useState<PageOrder>('notebook');
   const [pinned,setPinned]=useState(false);
@@ -19,7 +19,6 @@ export function SubjectPages({navigation,subject,current,busy,onOpen,onAdd}:{nav
   },[current]);
   return <section className="subject-pages" aria-label="Pages">
     <header><div><h2>{subject||'All pages'}</h2><span aria-live="polite">{filtered.length===pages.length?`${pages.length} ${pages.length===1?'page':'pages'}`:`${filtered.length} of ${pages.length} pages`}</span></div></header>
-    <button id="new-note" className="btn subject-add-page" disabled={busy} onClick={onAdd}><Plus size={16}/> New page</button>
     {pages.length>0&&<>
       <div className="subject-filter">
         <Search size={14} aria-hidden="true"/>

@@ -1,6 +1,6 @@
 
-import {lazy,Suspense,useEffect,useMemo,useRef,useState} from 'react';
-import {Plus,Search,Pin,Settings as Gear,Sigma,MoreHorizontal,Menu,ChevronLeft,ChevronRight,Save} from 'lucide-react';
+import {lazy,Suspense,useEffect,useMemo,useRef,useState,type CSSProperties,type KeyboardEvent as ReactKeyboardEvent} from 'react';
+import {Search,Pin,Settings as Gear,Sigma,MoreHorizontal,Menu,ChevronLeft,ChevronRight,Save,Maximize2,Minimize2,PanelLeft,FilePlus2} from 'lucide-react';
 import {api,type NoteInfo,type CanvasInfo,type Settings,type DocumentSearch,type DocumentHit} from './api';
 import {useNoteSession} from './noteSession';
 import {installNoteCloseGuard} from './noteClose';
@@ -11,9 +11,12 @@ import {Modal} from './components/Modal';
 import {FindInNote} from './components/FindInNote';
 import type {EquationRequest,InsertRequest,InsertKind} from './components/Editor';
 import './lean.css';
+import './workspace.css';
 import type {FormattingState} from './formattingState';
 import {shortcutLabel,writingShortcuts} from './writingShortcuts';
 import {listFocusIndex} from './pageList';
+import {defaultWorkspace,workspacePanels,type WorkspacePreferences} from './workspaceLayout';
+import {WorkspaceDivider} from './components/WorkspaceDivider';
 import {WritingTools} from './components/WritingTools';
 import {SubjectPages} from './components/SubjectPages';
 import {noteNavigation,openedNoteScope} from './navigation';
@@ -47,7 +50,24 @@ export default function App(){
   const [findSeed,setFindSeed]=useState('');
   const lastSubjectPage=useRef(new Map<string,string>());
   const searchResults=useRef<HTMLDivElement>(null);
-  const [sidebar,setSidebar]=useState(innerWidth>=900),[find,setFind]=useState(false);
+  const [viewport,setViewport]=useState(window.innerWidth);
+  const [overlayPages,setOverlayPages]=useState(false);
+  const [searchOpen,setSearchOpen]=useState(false);
+  const [focusMode,setFocusMode]=useState(false);
+  const [find,setFind]=useState(false);
+  const searchButton=useRef<HTMLButtonElement>(null);
+  const pagesButton=useRef<HTMLButtonElement>(null);
+  const preferences=settings.workspace??defaultWorkspace;
+  const panels=workspacePanels(viewport,preferences);
+  const showSubjects=!focusMode&&panels.subjects;
+  const pinnedPages=!focusMode&&panels.pages;
+  const showingResults=searchOpen&&!!query.trim();
+  const showPages=pinnedPages||overlayPages||showingResults;
+  useEffect(()=>{
+    const resize=()=>setViewport(window.innerWidth);
+    window.addEventListener('resize',resize);
+    return()=>window.removeEventListener('resize',resize);
+  },[]);
   const [notebooks,setNotebooks]=useState<Record<string,string[]>>({});
   const [pdfReader,setPdfReader]=useState<DocumentHit|null>(null);
   const [equation,setEquation]=useState<EquationRequest|null>(null),[insertion,setInsertion]=useState<InsertRequest|null>(null),[legacyCanvas,setLegacyCanvas]=useState<string|null>(null);
@@ -103,10 +123,10 @@ export default function App(){
       // If this is a reload of the current page, keep any typing that happened during the read.
       if(session.noteRef.current?.path===path&&(session.unsaved()||session.hasPendingWrites()||session.contentRef.current!==priorContent))return;
       await settlePage();if(request!==nav.current)return;
-      newNoteStarted.current=0;session.load(n);setFocusPath(n.path);setScope(openedNoteScope(navigation,n));setPdfReader(null);setFind(false);setLegacyCanvas(null);remember(path);if(innerWidth<900&&!keepNavigation)setSidebar(false);
+      newNoteStarted.current=0;session.load(n);setFocusPath(n.path);setScope(openedNoteScope(navigation,n));setPdfReader(null);setFind(false);setLegacyCanvas(null);remember(path);if(!pinnedPages&&!keepNavigation){setOverlayPages(false);setSearchOpen(false);}
     }catch(e){fail(e);}
   };
-  const openPdf=async(hit:DocumentHit)=>{if(creating.current)return;const request=++nav.current;try{await settlePage();if(request===nav.current){setPdfReader(hit);setFind(false);if(innerWidth<900)setSidebar(false);}}catch(e){fail(e);}};
+  const openPdf=async(hit:DocumentHit)=>{if(creating.current)return;const request=++nav.current;try{await settlePage();if(request===nav.current){setPdfReader(hit);setFind(false);if(!pinnedPages){setOverlayPages(false);setSearchOpen(false);}}}catch(e){fail(e);}};
   const sync=useSync(paths=>{void refresh().catch(fail);if(session.noteRef.current&&paths.includes(session.noteRef.current.path))setNotice('Sync updated this note. Reopen after saving to load the other version.');});
   useEffect(()=>{
     let live=true;
@@ -137,7 +157,7 @@ export default function App(){
       setFocusPath(page.path);
       if(starterCreated)setNotes(list=>[page,...list]);
       remember(page.path);
-      if(innerWidth<900)setSidebar(false);
+      setOverlayPages(false);
     });
     void Promise.allSettled([tree,initialPage]).then(results=>{
       if(!live)return;
@@ -157,7 +177,10 @@ export default function App(){
     const closeMenus=(event:PointerEvent|KeyboardEvent)=>{
       if(event instanceof KeyboardEvent&&event.key!=='Escape')return;
       document.querySelectorAll<HTMLDetailsElement>('.lean-menu[open]').forEach(menu=>{
-        if(event instanceof KeyboardEvent||!menu.contains(event.target as Node))menu.open=false;
+        if(event instanceof KeyboardEvent||!menu.contains(event.target as Node)){
+          if(event instanceof KeyboardEvent&&menu.contains(document.activeElement))menu.querySelector('summary')?.focus();
+          menu.open=false;
+        }
       });
     };
     window.addEventListener('pointerdown',closeMenus);window.addEventListener('keydown',closeMenus);
@@ -192,7 +215,7 @@ export default function App(){
       // Include any text typed in the previous note while creation was in flight.
       await settlePage();
       session.load(n);setPdfReader(null);setFind(false);setFocusPath(n.path);setLegacyCanvas(null);setDialog(null);setQuery('');remember(n.path);
-      if(innerWidth<900)setSidebar(false);
+      setOverlayPages(false);setSearchOpen(false);
     }
     catch(e){fail(e);}finally{creating.current=false;setBusy(false);}
   };
@@ -208,20 +231,63 @@ export default function App(){
     const page=pageIndex<0?undefined:pageSequence[pageIndex+offset];
     if(page&&!pdfReader)void open(page.note.path);
   };
+  const focusSearch=()=>{
+    setSearchOpen(true);
+    window.setTimeout(()=>document.getElementById('note-search')?.focus(),0);
+  };
+  const closeSearch=()=>{
+    setSearchOpen(false);
+    setQuery('');
+    searchButton.current?.focus();
+  };
+  const toggleFocus=()=>{
+    setFocusMode(value=>!value);
+    setOverlayPages(false);
+    setSearchOpen(false);
+  };
+  const focusRegion=(backwards:boolean)=>{
+    const regions=Array.from(document.querySelectorAll<HTMLElement>('[data-workspace-region]'));
+    const focusable=(region:HTMLElement)=>region.querySelector<HTMLElement>('.ProseMirror[contenteditable="true"], button[aria-current="page"]')
+      ??Array.from(region.querySelectorAll<HTMLElement>('button:not([disabled]),select,input,summary')).find(control=>control.getClientRects().length);
+    const available=regions.filter(region=>region.getClientRects().length&&focusable(region));
+    if(!available.length)return;
+    const current=available.findIndex(region=>region.contains(document.activeElement));
+    const next=current===-1?(backwards?available.length-1:0):(current+(backwards?-1:1)+available.length)%available.length;
+    focusable(available[next])?.focus();
+  };
+  const navigateRibbon=(event:ReactKeyboardEvent<HTMLDivElement>)=>{
+    if(event.altKey||event.ctrlKey||event.metaKey||event.shiftKey||event.nativeEvent.isComposing)return;
+    if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
+    const target=event.target as HTMLElement;
+    if(target.tagName!=='BUTTON')return;
+    const group=target.closest('[data-ribbon-group]');
+    if(!group)return;
+    const buttons=Array.from(group.querySelectorAll<HTMLButtonElement>('button:not([disabled])'));
+    const current=buttons.indexOf(target as HTMLButtonElement);
+    const next=event.key==='Home'?0:event.key==='End'?buttons.length-1:(current+(event.key==='ArrowLeft'?-1:1)+buttons.length)%buttons.length;
+    if(!buttons[next])return;
+    event.preventDefault();
+    buttons.forEach((button,index)=>{button.tabIndex=index===next?0:-1;});
+    buttons[next].focus();
+  };
   useEffect(()=>{
     const removeCloseGuard=installNoteCloseGuard(session);
-    const key=(e:KeyboardEvent)=>{if(e.defaultPrevented||e.isComposing||document.querySelector('.overlay'))return;const mod=e.ctrlKey||e.metaKey;if(!mod)return;
+    const key=(e:KeyboardEvent)=>{if(e.defaultPrevented||e.isComposing||document.querySelector('.overlay'))return;
+      if(e.key==='Escape'&&overlayPages&&!showingResults&&!document.querySelector('.lean-menu[open]')){setOverlayPages(false);pagesButton.current?.focus();return;}
+      if(e.key==='F6'&&!e.altKey&&!e.ctrlKey&&!e.metaKey){e.preventDefault();focusRegion(e.shiftKey);return;}
+      const mod=e.ctrlKey||e.metaKey;if(!mod)return;
       if(e.altKey)return;
       if(!e.shiftKey&&e.key.toLowerCase()==='s'){e.preventDefault();if(!e.repeat)void savePage();}
       else if(e.shiftKey&&(e.key==='PageUp'||e.key==='PageDown')&&pageIndex>=0&&!pdfReader){e.preventDefault();pageStep(e.key==='PageUp'?-1:1);}
       else if(e.shiftKey&&e.key.toLowerCase()==='n'){e.preventDefault();void newNote();}
-      else if(e.key.toLowerCase()==='k'){e.preventDefault();setSidebar(true);setTimeout(()=>document.getElementById('note-search')?.focus(),0);}
+      else if(e.key.toLowerCase()==='k'){e.preventDefault();focusSearch();}
       else if(e.key.toLowerCase()==='f'&&(session.noteRef.current||pdfReader)){e.preventDefault();if(pdfReader)document.getElementById('pdf-find')?.focus();else showFind();}};
     window.addEventListener('keydown',key);
     return()=>{removeCloseGuard();window.removeEventListener('keydown',key);};
   });
   const settingsQueue=useRef<Promise<unknown>>(Promise.resolve());
   const changeSettings=(next:Settings)=>{setSettings(next);settingsRef.current=next;applySettings(next);settingsQueue.current=settingsQueue.current.catch(()=>{}).then(()=>api.saveSettings(next)).catch(fail);};
+  const updateWorkspace=(change:Partial<WorkspacePreferences>)=>changeSettings({...settingsRef.current,workspace:{...(settingsRef.current.workspace??defaultWorkspace),...change}});
   const openLink=(target:string)=>{const clean=target.split('|')[0].split('#')[0],found=notes.find(n=>n.path===clean||n.path===`${clean}.md`||n.title.toLowerCase()===clean.toLowerCase());if(found)void open(found.path);else if(clean.endsWith('.canvas'))void open(clean);else setNotice(`Linked note “${clean}” was not found. Its link has been kept.`);};
   const sketch=async()=>{if(sketching.current)return;const owner=note?.path,apply=session.editorRef.current?.captureCanvasInsert();if(!owner||!apply){setNotice('Place the cursor in a paragraph to insert a sketch.');return;}sketching.current=true;
     try{await session.flush();const r=await fetch('/api/canvas',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder:parent(owner),title:`${note!.title} sketch`})});const c=await r.json();if(!r.ok)throw Error(c.error);apply(c.path);await session.flush();await refresh();}catch(e){fail(e);}finally{sketching.current=false;}};
@@ -258,15 +324,18 @@ export default function App(){
     newNoteStarted.current=0;
     setFocusPath('');
   };
-  return <div className="lean-app">
-    {sidebar&&<div className="notebook-navigation" aria-label="Notebook navigation">
-      <aside className="lean-sidebar" aria-label="Subjects navigation"><header><div className="library-brand"><strong>Cortex</strong></div><button className="icon" aria-label="Hide notes" onClick={()=>setSidebar(false)}>×</button></header>
-        <label className="lean-search"><Search size={15}/><input id="note-search" aria-label="Search notes and PDFs" placeholder="Search all notes" value={query} onChange={e=>setQuery(e.target.value)} onKeyDown={e=>{if(e.nativeEvent.isComposing)return;if(e.key==='Escape'&&query){e.preventDefault();clearSearch();}else if(e.key==='ArrowDown'){e.preventDefault();resultRows()[0]?.focus();}else if(e.key==='Enter'){resultRows()[0]?.click();}}}/>{query&&<button className="icon" aria-label="Clear search" onClick={clearSearch}>×</button>}</label>
+  return <div className="lean-app workspace" data-focus={focusMode?'on':undefined}
+    style={{'--workspace-subject-width':`${preferences.subjectWidth}px`,'--workspace-page-width':`${preferences.pageWidth}px`} as CSSProperties}>
+    {showSubjects&&<>
+      <aside className="lean-sidebar workspace-subjects" data-workspace-region aria-label="Subjects navigation"><header><div className="library-brand"><strong>Cortex</strong></div><button className="icon" aria-label="Collapse subjects" onClick={()=>updateWorkspace({subjects:false})}>×</button></header>
         <div className="lean-note-list"><NotebookLibrary notebooks={library} scope={scope} total={allPageCount} onSelect={selectNotebook} onCreate={()=>begin('folder')}/></div>
         <footer><button onClick={()=>setDialog('import')}>Import folder or files</button><button className="icon" aria-label="Settings" onClick={()=>setDialog('settings')}><Gear size={16}/></button></footer>
       </aside>
-      {query.trim()?<section className="subject-pages search-results" aria-label="Search results">
-        <header><h2>Search results</h2><button className="icon" aria-label="Close search" onClick={clearSearch}>×</button></header>
+      <WorkspaceDivider panel="subjects" width={preferences.subjectWidth} onResize={subjectWidth=>updateWorkspace({subjectWidth})}/>
+    </>}
+    {showPages&&<div className="workspace-page-panel" data-overlay={!pinnedPages?'true':undefined} data-workspace-region>
+      {showingResults?<section className="subject-pages search-results" aria-label="Search results">
+        <header><h2>Search results</h2><button className="icon" aria-label="Close search" onClick={closeSearch}>×</button></header>
         <div className="subject-results-scroll" ref={searchResults} onKeyDown={e=>{
           if(e.nativeEvent.isComposing||e.altKey||e.ctrlKey||e.metaKey||e.shiftKey)return;
           if(e.key==='Escape'){e.preventDefault();clearSearch();return;}
@@ -281,17 +350,45 @@ export default function App(){
             ?pdfHits.length?'':'No matching PDF pages. Image-only PDFs need selectable text.'
             :'PDF text is being indexed while the app is idle. Results may be incomplete.'}</p>}
         </div>
-      </section>:<SubjectPages key={scope} navigation={navigation} subject={scope} current={pdfReader?'':note?.path??''} busy={busy||starting} onOpen={path=>void open(path)} onAdd={()=>void newNote()}/>}
+      </section>:<SubjectPages key={scope} navigation={navigation} subject={scope} current={pdfReader?'':note?.path??''} onOpen={path=>void open(path)}/>}
+      {pinnedPages&&<WorkspaceDivider panel="pages" width={preferences.pageWidth} onResize={pageWidth=>updateWorkspace({pageWidth})}/>}
     </div>}
-    <main className="lean-main"><header className="lean-topbar"><button className="icon" aria-label={sidebar?'Hide notebook navigation':'Show notebook navigation'} aria-expanded={sidebar} onClick={()=>setSidebar(v=>!v)}><Menu size={18}/></button><nav className="note-breadcrumbs grow" aria-label="Note location">{pdfReader?<><button onClick={()=>note?void open(note.path):setPdfReader(null)}>← Back to note</button><span>{pdfReader.title}</span></>:<><span>Notes</span>{note&&<span> / {navigation.subject(note.path)||'Unfiled'} / {note.title}</span>}</>}</nav>{note&&!pdfReader&&<div className="page-save-controls">
+    <main className="lean-main workspace-main"><header className="lean-topbar workspace-topbar" data-workspace-region>
+      <details className="lean-menu workspace-panels"><summary aria-label="Workspace options" title="Workspace options"><Menu size={17}/></summary><div>
+        <button type="button" aria-pressed={preferences.subjects} onClick={()=>updateWorkspace({subjects:!preferences.subjects})}>Pin subjects</button>
+        <button type="button" aria-pressed={preferences.pages} onClick={()=>updateWorkspace({pages:!preferences.pages})}>Pin pages</button>
+        <button type="button" onClick={event=>{begin('folder');dismissMenu(event);}}>New subject</button>
+        <button type="button" onClick={event=>{setDialog('import');dismissMenu(event);}}>Import folder or files</button>
+        <button type="button" onClick={event=>{setDialog('settings');dismissMenu(event);}}>Settings</button>
+      </div></details>
+      {!showSubjects&&!focusMode&&<select className="workspace-subject-picker" aria-label="Choose subject" value={scope} onChange={event=>selectNotebook(library.find(book=>book.subject===event.target.value)??null)}>
+        <option value="">All pages</option>{scope&&!library.some(book=>book.subject===scope)&&<option value={scope}>{scope}</option>}
+        {library.map(book=><option key={book.subject} value={book.subject}>{book.subject}</option>)}
+      </select>}
+      <button ref={pagesButton} className="icon" type="button" aria-label={showPages?'Hide pages':'Show pages'} title={showPages?'Hide pages':'Show pages'}
+        aria-expanded={showPages} onClick={()=>{
+          if(pinnedPages)updateWorkspace({pages:false});
+          else if(showingResults)closeSearch();
+          else if(!focusMode&&workspacePanels(viewport,{...preferences,pages:true}).pages)updateWorkspace({pages:true});
+          else setOverlayPages(value=>!value);
+        }}><PanelLeft size={17}/></button>
+      <button ref={searchButton} className="icon" type="button" title="Search library (Ctrl/Cmd+K)" aria-label="Search library" aria-expanded={searchOpen} onClick={()=>searchOpen?closeSearch():focusSearch()}><Search size={17}/></button>
+      <button className="icon workspace-focus" type="button" aria-pressed={focusMode} aria-label={focusMode?'Exit Focus mode':'Focus mode'} title={focusMode?'Exit Focus mode':'Focus mode'} onClick={toggleFocus}>{focusMode?<Minimize2 size={17}/>:<Maximize2 size={17}/>}</button>
+      <nav className="note-breadcrumbs grow" aria-label="Note location">{pdfReader?<><button onClick={()=>note?void open(note.path):setPdfReader(null)}>← Back to note</button><span>{pdfReader.title}</span></>:<><span>Notes</span>{note&&<span> / {navigation.subject(note.path)||'Unfiled'} / {note.title}</span>}</>}</nav>{note&&!pdfReader&&<div className="page-save-controls">
         <span className={`note-save-state ${session.saveStatus}`} role="status">{manualSave||session.saveStatus==='saving'?'Saving…':session.saveStatus==='error'?'Save needs attention':manualSavedPath===note.path?'Saved just now':'Saved'}</span>
         <button type="button" className="btn ghost small page-save-button" aria-label="Save page" title="Save page (Ctrl/Cmd+S)" aria-keyshortcuts="Control+S Meta+S" disabled={manualSave} onClick={()=>void savePage()}><Save size={15} aria-hidden="true"/> Save</button>
-      </div>}<button className="btn ghost small topbar-new-note" disabled={busy||starting} onClick={()=>void newNote()}><Plus size={16}/> New page</button></header>
+      </div>}<button id="new-note" className="btn small topbar-new-note" aria-label="New page" title={scope?`New page in ${scope}`:'New page in All pages'} disabled={busy||starting} onClick={()=>void newNote()}><FilePlus2 size={16} aria-hidden="true"/><span>New page</span></button></header>
+      {searchOpen&&<div className="workspace-search-row"><label className="lean-search"><Search size={15} aria-hidden="true"/><input id="note-search" aria-label="Search notes and PDFs" placeholder="Search notes and PDFs" value={query} onChange={e=>setQuery(e.target.value)} onKeyDown={e=>{
+        if(e.nativeEvent.isComposing)return;
+        if(e.key==='Escape'){e.preventDefault();if(query)clearSearch();else closeSearch();}
+        else if(e.key==='ArrowDown'){e.preventDefault();resultRows()[0]?.focus();}
+        else if(e.key==='Enter'){resultRows()[0]?.click();}
+      }}/></label><button className="icon" type="button" aria-label="Close library search" onClick={closeSearch}>×</button></div>}
       {(session.saveError||error)&&<div className="error lean-notice" role="alert">{session.saveError||error} <button onClick={()=>setDialog('recovery')}>Recovery</button>{!session.saveError&&<button aria-label="Dismiss error" onClick={()=>setError('')}>×</button>}</div>}{notice&&<div className="lean-notice" role="status">{notice}<button aria-label="Dismiss notice" onClick={()=>setNotice('')}>×</button></div>}
-      <div className="lean-document" ref={documentRef}>{pdfReader?<Suspense fallback={<p role="status">Opening PDF…</p>}><div className="standalone-pdf"><h1>{pdfReader.title}</h1><PdfView key={`${pdfReader.path}:${pdfReader.page}`} path={pdfReader.path} url={'/files/'+pdfReader.path.split('/').map(encodeURIComponent).join('/')} initialPage={pdfReader.page} initialQuery={query} standalone/></div></Suspense>:note?<><div className="document-kind">Page</div><div className="lean-title"><button title="Rename note" onClick={()=>begin('rename')}>{note.title}</button><button className="icon" aria-label={note.pinned?'Unpin note':'Pin note'} aria-pressed={note.pinned} onClick={()=>action(()=>session.setMeta({pinned:!note.pinned}))}><Pin size={16}/></button></div>
-        <div className="document-toolbar" role="toolbar" aria-label="Formatting"><WritingTools key={note.path} state={formatting?.path===note.path?formatting.state:undefined} onShortcuts={()=>setDialog('shortcuts')} format={key=>session.editorRef.current?.format(key)} meta={note.meta} onStyle={style=>session.setMeta({documentStyle:style})} onError={fail}/>
-          <button className="btn ghost small" onClick={()=>session.editorRef.current?.requestEquation()}><Sigma size={16}/> Equation</button><details className="lean-menu"><summary>Insert</summary><div>{(['table','figure','image'] as const).map(k=><button key={k} onClick={e=>{insert(k);dismissMenu(e);}}>{k==='figure'?'Graph / chart':k==='table'?'Table':'Image'}</button>)}<button onClick={e=>{void sketch();dismissMenu(e);}}>Sketch</button><label>Attachment<input type="file" hidden onChange={e=>{const f=e.target.files?.[0];if(f)void attach(f);e.target.value='';e.currentTarget.closest('details')?.removeAttribute('open');}}/></label></div></details>
-          <button className="btn ghost small" title="Find in this note (Ctrl+F)" aria-expanded={find} onClick={()=>find?setFind(false):showFind()}>Find</button><span className="grow"/><details className="lean-menu"><summary aria-label="Note options"><MoreHorizontal size={18}/></summary><div>{([['details','Sources & links'],['move','Move page'],['history','Version history']] as const).map(([d,label])=><button key={d} disabled={d==='move'&&navigation.children.has(note.path)&&!navigation.parents.has(note.path)} onClick={e=>{begin(d);dismissMenu(e);}}>{label}</button>)}<button onClick={()=>action(async()=>{await flushSavedWork();window.open(`/api/export/html?path=${encodeURIComponent(note.path)}&inline=1&print=1`,'_blank');})}>Export / Print PDF</button><button onClick={()=>action(async()=>{await flushSavedWork();const a=document.createElement('a');a.href=`/api/export/html?path=${encodeURIComponent(note.path)}`;a.click();})}>Export HTML</button><button onClick={()=>action(async()=>{await flushSavedWork();const a=document.createElement('a');a.href=`/api/export/docx?path=${encodeURIComponent(note.path)}`;a.click();})}>Export Word (.docx)</button><button onClick={()=>setDialog('delete')}>Move to Trash</button></div></details></div>
+      {note&&!pdfReader&&<div className="document-toolbar" data-workspace-region role="toolbar" aria-label="Formatting" onKeyDown={navigateRibbon}><WritingTools key={note.path} wide={preferences.wide} onWidth={wide=>updateWorkspace({wide})} state={formatting?.path===note.path?formatting.state:undefined} onShortcuts={()=>setDialog('shortcuts')} format={key=>session.editorRef.current?.format(key)} meta={note.meta} onStyle={style=>session.setMeta({documentStyle:style})} onError={fail}/>
+          <button className="btn ghost small ribbon-equation" aria-label="Equation" title="Equation (Alt+=)" onClick={()=>session.editorRef.current?.requestEquation()}><Sigma size={16} aria-hidden="true"/><span>Equation</span></button><details className="lean-menu ribbon-insert"><summary>Insert</summary><div>{(['table','figure','image'] as const).map(k=><button key={k} onClick={e=>{insert(k);dismissMenu(e);}}>{k==='figure'?'Graph / chart':k==='table'?'Table':'Image'}</button>)}<button onClick={e=>{void sketch();dismissMenu(e);}}>Sketch</button><label>Attachment<input type="file" hidden onChange={e=>{const f=e.target.files?.[0];if(f)void attach(f);e.target.value='';e.currentTarget.closest('details')?.removeAttribute('open');}}/></label></div></details>
+          <button className="btn ghost small ribbon-find" aria-label="Find in page" title="Find in page (Ctrl/Cmd+F)" aria-expanded={find} onClick={()=>find?setFind(false):showFind()}><Search size={15} aria-hidden="true"/><span>Find</span></button><details className="lean-menu"><summary aria-label="Note options"><MoreHorizontal size={18}/></summary><div>{([['details','Sources & links'],['move','Move page'],['history','Version history']] as const).map(([d,label])=><button key={d} disabled={d==='move'&&navigation.children.has(note.path)&&!navigation.parents.has(note.path)} onClick={e=>{begin(d);dismissMenu(e);}}>{label}</button>)}<button onClick={()=>action(async()=>{await flushSavedWork();window.open(`/api/export/html?path=${encodeURIComponent(note.path)}&inline=1&print=1`,'_blank');})}>Export / Print PDF</button><button onClick={()=>action(async()=>{await flushSavedWork();const a=document.createElement('a');a.href=`/api/export/html?path=${encodeURIComponent(note.path)}`;a.click();})}>Export HTML</button><button onClick={()=>action(async()=>{await flushSavedWork();const a=document.createElement('a');a.href=`/api/export/docx?path=${encodeURIComponent(note.path)}`;a.click();})}>Export Word (.docx)</button><button onClick={()=>setDialog('delete')}>Move to Trash</button></div></details></div>}
+      <div className="lean-document" data-workspace-region data-width={preferences.wide?'wide':'reading'} ref={documentRef}>{pdfReader?<Suspense fallback={<p role="status">Opening PDF…</p>}><div className="standalone-pdf"><h1>{pdfReader.title}</h1><PdfView key={`${pdfReader.path}:${pdfReader.page}`} path={pdfReader.path} url={'/files/'+pdfReader.path.split('/').map(encodeURIComponent).join('/')} initialPage={pdfReader.page} initialQuery={query} standalone/></div></Suspense>:note?<><div className="lean-title"><button title="Rename note" onClick={()=>begin('rename')}>{note.title}</button><button className="icon" aria-label={note.pinned?'Unpin note':'Pin note'} aria-pressed={note.pinned} onClick={()=>action(()=>session.setMeta({pinned:!note.pinned}))}><Pin size={16}/></button></div>
         {find&&<FindInNote key={note.path} initialQuery={findSeed} ready={editorPath===note.path} editorRef={session.editorRef} onClose={()=>setFind(false)}/>}<Suspense fallback={<p role="status">Opening note…</p>}><Editor key={`${note.path}:${session.generation}`} path={note.path} initial={note.content} attachments={note.attachments} notes={notes} handleRef={session.editorRef} autoFocus={focusPath===note.path} onReady={()=>editorReady(note.path)} onEdit={()=>{setManualSavedPath('');session.onEdit(note.path,session.generation);}} onChange={md=>session.onChange(note.path,session.generation,md)} onOpenLink={openLink} onEquationRequest={setEquation} onInsertRequest={setInsertion} onCanvasRequest={()=>void sketch()} documentStyle={note.meta} onWordCount={setWords} onFormatting={state=>setFormatting({path:note.path,state})}/></Suspense><footer className="document-status">
           <span>{editorPath===note.path?`${words} ${words===1?'word':'words'}`:''}</span>
           {pageIndex>=0&&pageSequence.length>1&&<div className="document-page-step">
@@ -313,7 +410,7 @@ export default function App(){
     </Suspense>
     {(['rename','move','folder'] as Dialog[]).includes(dialog)&&<Modal title={dialog==='rename'?'Rename note':dialog==='move'?'Move page':'New subject'} onClose={()=>setDialog(null)}><form onSubmit={e=>{e.preventDefault();void commitName();}}><label className="field-label">{dialog==='rename'?'Title':dialog==='folder'?'Subject name':'Destination'}<>{dialog==='move'?<select className="field" autoFocus aria-label="Destination notebook or section" value={name} onChange={e=>setName(e.target.value)} required><option value="" disabled>Choose a notebook or section</option>{[...navigation.children.keys()].filter(p=>!navigation.trail(p).some(n=>n.path===note?.path)).map(p=><option value={p} key={p}>{navigation.trail(p).map(n=>n.title).join(' / ')}</option>)}</select>:<input className="field" autoFocus type="text" value={name} onChange={e=>setName(e.target.value)} required/>}</></label><div className="actions"><button type="button" className="btn ghost" onClick={()=>setDialog(null)}>Cancel</button><button className="btn" disabled={busy}>Save</button></div></form></Modal>}
     {dialog==='shortcuts'&&<Modal title="Writing shortcuts" onClose={()=>setDialog(null)}>
-      <dl className="writing-shortcuts">{writingShortcuts.map(([key,action,label])=><div key={action}><dt>{label}</dt><dd><kbd>{shortcutLabel(key,/Mac/i.test(navigator.platform))}</kbd></dd></div>)}</dl>
+      <dl className="writing-shortcuts"><div><dt>Move between workspace areas</dt><dd><kbd>F6 / Shift+F6</kbd></dd></div><div><dt>Move within a toolbar group</dt><dd><kbd>← / →</kbd></dd></div>{writingShortcuts.map(([key,action,label])=><div key={action}><dt>{label}</dt><dd><kbd>{shortcutLabel(key,/Mac/i.test(navigator.platform))}</kbd></dd></div>)}</dl>
     </Modal>}
     {dialog==='delete'&&note&&<Modal title="Move note to Trash?" onClose={()=>setDialog(null)}><p>{note.title} can be restored from Trash.</p><button className="btn danger" onClick={()=>action(async()=>{await session.flush();const primary=Object.keys(notebooks).find(p=>notebooks[p].includes(note.path));await api.remove(note.path);session.clear();await refresh();setDialog(null);if(primary)await open(primary);})}>Move to Trash</button></Modal>}
     {dialog==='details'&&note&&<Modal title="Sources & links" onClose={()=>setDialog(null)}><p className="muted small">{note.path}</p><h4>Attachments</h4>{Object.entries(note.attachments).map(([label,p])=><p key={label}><a href={'/files/'+p.split('/').map(encodeURIComponent).join('/')} target="_blank" rel="noreferrer">{label}</a></p>)}<h4>Linked notes</h4>{notes.filter(n=>n.links.includes(note.title)||n.links.includes(note.path.slice(0,-3))).map(n=><p key={n.path}><button className="link" onClick={()=>{setDialog(null);void open(n.path);}}>{n.title}</button></p>)}</Modal>}
